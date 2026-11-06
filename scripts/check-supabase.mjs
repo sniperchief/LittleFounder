@@ -215,6 +215,94 @@ try {
   check("an idea can be deleted", (await call("delete_idea", { idea_id: draft?.id }))?.status === "ok" &&
     (await B.client.from("startup_projects").select("id").eq("id", draft?.id)).data?.length === 0);
   check("anon cannot save ideas", Boolean((await anon.rpc("save_idea", { idea_id: null, fields: {} })).error));
+
+  console.log("\nStartup Simulator (Phase 5)");
+  const scen = (await anon.from("simulator_scenarios").select("key, starting_budget").order("key")).data ?? [];
+  check("EcoBottle and My idea challenges are published with a 1,000 FB budget", scen.map((s) => s.key).join() === "ecobottle,my-idea" && scen.every((s) => s.starting_budget === 1000));
+  check("sessions cannot be inserted directly", Boolean((await B.client.from("simulator_sessions").insert({ child_id: childB, scenario_id: childB, seed: 0, starting_budget: 1000000 })).error));
+  const runSim = (id, price, quantity, marketing_key) => call("run_simulation", { session_id: id, price, quantity, marketing_key });
+  const sim = await call("start_simulation", { scenario_key: "ecobottle" });
+  check("an EcoBottle attempt starts for the child in Child Mode", sim?.status === "ok" && sim.resumed === false, JSON.stringify(sim));
+  check("starting again resumes the unfinished attempt", (await call("start_simulation", { scenario_key: "ecobottle" }))?.id === sim?.id);
+  check("My idea needs a created idea", (await call("start_simulation", { scenario_key: "my-idea" }))?.status === "idea_required");
+  check("draft choices are validated", (await call("save_simulation_draft", { session_id: sim?.id, draft: { price: 7 } }))?.status === "invalid" &&
+    (await call("save_simulation_draft", { session_id: sim?.id, draft: { price: 10, step: 3 } }))?.status === "ok");
+  const over = await runSim(sim?.id, 10, 250, "posters");
+  check("spending beyond the budget is refused with the amount", over?.status === "over_budget" && over.over_by === 50, JSON.stringify(over));
+  check("manipulated options are refused", (await runSim(sim?.id, 9999, 100, "none"))?.status === "invalid" && (await runSim(sim?.id, 10, 100, "billboard"))?.status === "invalid");
+  const done = await runSim(sim?.id, 10, 100, "posters");
+  check("the server calculates the documented result (550 FB profit, 1,550 FB cash)",
+    done?.status === "ok" && done.units_sold === 100 && done.revenue === 1000 && done.total_cost === 450 && done.profit === 550 && done.cash_remaining === 1550);
+  check("the first completed run awards First Business Run", done?.achievements?.includes("first-business-run"));
+  check("a completed attempt cannot be run again", (await runSim(sim?.id, 6, 50, "none"))?.status === "already_completed");
+  check("clients cannot change stored results", denied(await B.client.from("simulator_sessions").update({ final_summary: { profit: 999999 } }).eq("id", sim?.id).select()));
+  check("the reflection is saved once", (await call("set_simulation_reflection", { session_id: sim?.id, reflection: "price" }))?.status === "ok" &&
+    (await call("set_simulation_reflection", { session_id: sim?.id, reflection: "same" }))?.status === "already_answered");
+  const sim2 = await call("start_simulation", { scenario_key: "ecobottle" });
+  const loss = await runSim(sim2?.id, 15, 250, "none");
+  check("a second attempt is kept separately and reports a loss", sim2?.id !== sim?.id && loss?.profit === -400 && loss?.outcome === "loss");
+  check("repeat attempts don't award the badge again", loss?.achievements?.length === 0);
+  const storedSims = (await B.client.from("simulator_sessions").select("id, status, final_summary, reflection").eq("child_id", childB).eq("status", "completed")).data ?? [];
+  check("the parent can read both completed attempts with results", storedSims.length === 2 && storedSims.some((s) => s.final_summary?.profit === 550 && s.reflection === "price"));
+  check("another family cannot read these simulations",
+    (await A.client.from("simulator_sessions").select("id")).data?.length === 0 && (await A.client.from("simulator_rounds").select("id")).data?.length === 0);
+  check("anon cannot run simulations", Boolean((await anon.rpc("run_simulation", { session_id: sim?.id, price: 10, quantity: 100, marketing_key: "none" })).error));
+
+  console.log("\nPitch Studio & Investor Room (Phase 6)");
+  const ideaB = (await B.client.from("startup_projects").select("id").eq("child_id", childB).limit(1).single()).data?.id;
+  const savePitch = (deck_id, fields, step = null, finish = false) => call("save_pitch", { deck_id, fields, step, finish });
+  check("pitch decks cannot be inserted directly", Boolean((await B.client.from("pitch_decks").insert({ child_id: childB, title: "Direct" })).error));
+  const pitch = await call("start_pitch", { project_id: ideaB, prefill: { title: "Demo Puzzle Pup", problem: "Pets get bored when everyone is out" } });
+  check("a pitch starts from the child's own idea with prefilled content", pitch?.status === "ok" && pitch.resumed === false &&
+    (await B.client.from("pitch_slides").select("content").eq("deck_id", pitch.id).eq("section", "problem").single()).data?.content?.main === "Pets get bored when everyone is out",
+    JSON.stringify(pitch));
+  check("starting again for the same idea resumes it", (await call("start_pitch", { project_id: ideaB, prefill: {} }))?.id === pitch?.id);
+  check("contact details and links are refused", (await savePitch(pitch?.id, { solution: "Email me at kid@example.com" }))?.status === "personal_info" &&
+    (await savePitch(pitch?.id, { tagline: "www.puzzlepup.test" }))?.status === "personal_info");
+  check("over-long text and unknown fields are refused", (await savePitch(pitch?.id, { problem: "x".repeat(281) }))?.status === "invalid" &&
+    (await savePitch(pitch?.id, { child_id: childA }))?.status === "invalid");
+  const notYet = await savePitch(pitch?.id, { solution: "A puzzle feeder made from boxes" }, 6, true);
+  check("an incomplete pitch cannot be finished", notYet?.status === "incomplete" && notYet.missing?.join() === "customer,business_model", JSON.stringify(notYet));
+  check("practice needs a finished pitch", (await call("start_investor_practice", { deck_id: pitch?.id, persona_key: "penny" }))?.status === "pitch_not_finished");
+  const pitchDone = await savePitch(pitch?.id, { customer: "Pet owners with busy days", business_model: "Sell each feeder for more than it costs" }, 6, true);
+  check("a complete pitch finishes as version 1 and awards First Pitch", pitchDone?.status === "ok" && pitchDone.version === 1 && pitchDone.achievements?.includes("first-pitch"), JSON.stringify(pitchDone));
+  check("clients cannot change slides or versions directly",
+    denied(await B.client.from("pitch_slides").update({ content: {} }).eq("deck_id", pitch?.id).select()) &&
+    denied(await B.client.from("pitch_versions").update({ snapshot: {} }).eq("deck_id", pitch?.id).select()));
+  check("investor answer scores and feedback are hidden",
+    Boolean((await B.client.from("investor_answer_options").select("score")).error) && Boolean((await anon.from("investor_answer_options").select("feedback")).error));
+  check("4 pretend investors are published", (await anon.from("investor_personas").select("key")).data?.length === 4);
+  const pennyQs = (await admin.from("investor_questions").select("id, position, investor_personas!inner(key), investor_answer_options(id, score)")
+    .eq("investor_personas.key", "penny").order("position")).data ?? [];
+  const pick = (q, score) => q.investor_answer_options.find((o) => o.score === score).id;
+  const practice = await call("start_investor_practice", { deck_id: pitch?.id, persona_key: "penny" });
+  check("a practice starts with a pretend investor", practice?.status === "ok", JSON.stringify(practice));
+  const ans = (q, score, note = "") => call("answer_investor_question", { session_id: practice?.id, question_id: q.id, option_id: pick(q, score), note });
+  check("questions must be answered in order", (await ans(pennyQs[1], 3))?.status === "out_of_order");
+  check("personal details in typed answers are refused", (await ans(pennyQs[0], 3, "Call me on 07700 900123"))?.status === "personal_info");
+  const firstAnswer = await ans(pennyQs[0], 3, "I asked eight dog owners and six said yes");
+  check("a strong answer in own words scores 3 + 1 with feedback", firstAnswer?.score === 3 && firstAnswer.bonus === 1 && firstAnswer.feedback?.length > 0);
+  await ans(pennyQs[1], 1);
+  await ans(pennyQs[2], 0);
+  await ans(pennyQs[3], 3, "my price is more than the cost to make");
+  const last = await ans(pennyQs[4], 3);
+  check("the server scores the documented rubric (12/20 → 60, Promising)", last?.completed === true && last.points === 12 && last.total_score === 60 && last.band === "promising", JSON.stringify(last));
+  check("the first practice awards Confident Founder", last?.achievements?.includes("confident-founder"));
+  check("clients cannot change practice results", denied(await B.client.from("investor_sessions").update({ total_score: 100 }).eq("id", practice?.id).select()));
+  const revised = await savePitch(pitch?.id, { problem: "Dogs chew things when bored at home" }, 1);
+  check("editing a finished pitch marks it revising, keeping version 1 and its practice", revised?.deck_status === "draft" &&
+    (await B.client.from("pitch_versions").select("snapshot").eq("deck_id", pitch?.id)).data?.[0]?.snapshot?.sections?.problem?.main === "Pets get bored when everyone is out" &&
+    (await B.client.from("investor_sessions").select("total_score").eq("id", practice?.id).single()).data?.total_score === 60);
+  const v2 = await savePitch(pitch?.id, {}, 6, true);
+  check("finishing the revision saves version 2 without a duplicate badge", v2?.version === 2 && v2.achievements?.length === 0);
+  check("the parent can read both versions and the practice answers",
+    (await B.client.from("pitch_versions").select("id").eq("deck_id", pitch?.id)).data?.length === 2 &&
+    (await B.client.from("investor_responses").select("score, review").eq("session_id", practice?.id)).data?.length === 5);
+  check("another family cannot read this pitch or its practice",
+    (await A.client.from("pitch_decks").select("id")).data?.length === 0 && (await A.client.from("pitch_versions").select("id")).data?.length === 0 &&
+    (await A.client.from("investor_sessions").select("id")).data?.length === 0 && (await A.client.from("investor_responses").select("score")).data?.length === 0);
+  check("another family cannot edit it", (await A.client.rpc("save_pitch", { deck_id: pitch?.id, fields: { problem: "Hijack attempt" } })).data?.status === "not_in_child_mode");
+  check("anon cannot start pitches", Boolean((await anon.rpc("start_pitch", { project_id: ideaB })).error));
   check("parent B leaves Child Mode with the PIN", (await call("exit_child_mode", { pin: "2580" })) === "ok");
 } catch (err) {
   failed++;

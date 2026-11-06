@@ -325,7 +325,7 @@ on conflict (question_id, position) do update
   set label = excluded.label, is_correct = excluded.is_correct, feedback = excluded.feedback;
 
 -- Founder Passport achievements (rules are evaluated by public.evaluate_achievements)
-delete from public.achievements where key not in ('first-steps', 'steady-learner', 'problem-spotter', 'idea-creator', 'customer-explorer', 'business-thinker', 'confident-pitcher', 'young-investor-scholar', 'quiz-whiz', 'idea-spark', 'halfway-hero', 'academy-graduate');
+delete from public.achievements where key not in ('first-steps', 'steady-learner', 'problem-spotter', 'idea-creator', 'customer-explorer', 'business-thinker', 'confident-pitcher', 'young-investor-scholar', 'quiz-whiz', 'idea-spark', 'first-business-run', 'first-pitch', 'confident-founder', 'halfway-hero', 'academy-graduate');
 insert into public.achievements (key, title, description, icon_key, rule, tier) values
   ('first-steps', 'First Steps', 'Completed your first Founder Academy lesson.', 'footprints', '{"type":"lessons_completed","count":1}'::jsonb, 1),
   ('steady-learner', 'Steady Learner', 'Completed 5 lessons.', 'book-open', '{"type":"lessons_completed","count":5}'::jsonb, 1),
@@ -337,6 +337,9 @@ insert into public.achievements (key, title, description, icon_key, rule, tier) 
   ('young-investor-scholar', 'Young Investor Scholar', 'Completed Meet the Investors: you understand investment, ownership and what investors look for.', 'handshake', '{"type":"module_completed","module":"meet-the-investors"}'::jsonb, 2),
   ('quiz-whiz', 'Quiz Whiz', 'Scored 100% on a module quiz.', 'star', '{"type":"perfect_quiz"}'::jsonb, 2),
   ('idea-spark', 'Idea Spark', 'Created your first business idea in the Idea Lab.', 'lightbulb', '{"type":"ideas_created","count":1}'::jsonb, 1),
+  ('first-business-run', 'First Business Run', 'Completed your first Startup Simulator challenge.', 'trending-up', '{"type":"simulations_completed","count":1}'::jsonb, 1),
+  ('first-pitch', 'First Pitch', 'Finished your first pitch in Pitch Studio.', 'presentation', '{"type":"pitches_completed","count":1}'::jsonb, 1),
+  ('confident-founder', 'Confident Founder', 'Completed your first Investor Room practice.', 'mic', '{"type":"practices_completed","count":1}'::jsonb, 2),
   ('halfway-hero', 'Halfway Hero', 'Completed 3 Academy modules.', 'flag', '{"type":"modules_completed","count":3}'::jsonb, 2),
   ('academy-graduate', 'Academy Graduate', 'Completed all six Founder Academy modules.', 'graduation-cap', '{"type":"modules_completed","count":6}'::jsonb, 3)
 on conflict (key) do update
@@ -348,3 +351,186 @@ insert into public.certificate_types (key, title, requirement, onchain_eligible)
   ('founder-academy-milestone', 'Founder Academy Learning Milestone', '{"type":"modules_completed","count":6}'::jsonb, false)
 on conflict (key) do update
   set title = excluded.title, requirement = excluded.requirement;
+
+-- Startup Simulator challenges (Founder Bucks are pretend, virtual units). Rules: docs/STARTUP_SIMULATOR.md
+insert into public.simulator_scenarios (key, title, product_kind, starting_budget, unit_cost_base, demand_params, rounds) values
+  ('ecobottle', 'EcoBottle', 'reusable water bottle', 1000, 4, '{"startingBudget":1000,"unitCost":4,"prices":[6,8,10,12,15],"interestedAtPrice":{"6":160,"8":130,"10":100,"12":70,"15":40},"quantities":[50,100,150,200,250],"marketing":[{"key":"none","label":"No marketing","cost":0,"reach":0,"description":"Keep all your Founder Bucks for making bottles."},{"key":"posters","label":"Posters around town","cost":50,"reach":20,"description":"Cheap, and a few more people hear about you."},{"key":"fair-stall","label":"Stall at the school fair","cost":100,"reach":45,"description":"Lots of families walk past your stall."},{"key":"radio","label":"Local radio shout-out","cost":200,"reach":80,"description":"Reaches the most people, but costs the most."}],"usesIdea":false}'::jsonb, 1),
+  ('my-idea', 'My idea', 'product', 1000, 4, '{"startingBudget":1000,"unitCost":4,"prices":[6,8,10,12,15],"interestedAtPrice":{"6":160,"8":130,"10":100,"12":70,"15":40},"quantities":[50,100,150,200,250],"marketing":[{"key":"none","label":"No marketing","cost":0,"reach":0,"description":"Keep all your Founder Bucks for making bottles."},{"key":"posters","label":"Posters around town","cost":50,"reach":20,"description":"Cheap, and a few more people hear about you."},{"key":"fair-stall","label":"Stall at the school fair","cost":100,"reach":45,"description":"Lots of families walk past your stall."},{"key":"radio","label":"Local radio shout-out","cost":200,"reach":80,"description":"Reaches the most people, but costs the most."}],"usesIdea":true}'::jsonb, 1)
+on conflict (key) do update
+  set title = excluded.title, product_kind = excluded.product_kind, starting_budget = excluded.starting_budget,
+      unit_cost_base = excluded.unit_cost_base, demand_params = excluded.demand_params, rounds = excluded.rounds;
+
+-- Investor Room: pretend investor personas and their questions (scores and feedback are hidden
+-- from clients by column grants). Rubric: docs/PITCH_STUDIO.md
+delete from public.investor_personas where key not in ('penny', 'captain', 'ivy', 'sam');
+insert into public.investor_personas (key, name, avatar_key, focus, style, intro_text, position) values
+  ('penny', 'Penny the Planner', 'penny', 'Money, costs and profit', 'Precise and friendly', 'Hello! I''m Penny, a pretend investor who loves a good plan. I like to see how the numbers fit together — don''t worry about being exact, I just want to see you''ve thought about it.', 1),
+  ('captain', 'Captain Customer', 'captain', 'Who buys, and why', 'Curious', 'Ahoy! I''m Captain Customer, a pretend investor. I''m always curious about the people your idea is for — let''s find out how well you know them!', 2),
+  ('ivy', 'Inventor Ivy', 'ivy', 'Solutions and creativity', 'Enthusiastic', 'Hi hi! I''m Inventor Ivy, a pretend investor who loves clever ideas. I want to hear all about how your invention works and how you''ll make it even better!', 3),
+  ('sam', 'Steady Sam', 'sam', 'Risks and next steps', 'Calm and careful', 'Hello there. I''m Steady Sam, a pretend investor. I like to think carefully about what could go wrong and what comes next. Take your time — there are no trick questions.', 4)
+on conflict (key) do update
+  set name = excluded.name, avatar_key = excluded.avatar_key, focus = excluded.focus, style = excluded.style,
+      intro_text = excluded.intro_text, position = excluded.position;
+
+delete from public.investor_questions where key is null or key not in ('penny-problem', 'penny-solution', 'penny-customer', 'penny-business-model', 'penny-ask', 'captain-problem', 'captain-solution', 'captain-customer', 'captain-business-model', 'captain-ask', 'ivy-problem', 'ivy-solution', 'ivy-customer', 'ivy-business-model', 'ivy-ask', 'sam-problem', 'sam-solution', 'sam-customer', 'sam-business-model', 'sam-ask');
+insert into public.investor_questions (persona_id, key, position, section, prompt, hint)
+select p.id, v.key, v.position, v.section, v.prompt, v.hint
+from (values
+  ('penny', 'penny-problem', 1, 'problem', 'How do you know this problem is worth solving?', 'Think about evidence: who told you, or what did you see?'),
+  ('penny', 'penny-solution', 2, 'solution', 'What would it cost to make or run your solution?', 'Think about materials, tools and time.'),
+  ('penny', 'penny-customer', 3, 'customer', 'How many customers could you realistically reach at first?', 'Start small — who could you actually reach?'),
+  ('penny', 'penny-business-model', 4, 'business_model', 'How will your price cover your costs?', 'Compare what you charge with what each one costs you.'),
+  ('penny', 'penny-ask', 5, 'ask', 'If you had some pretend funding, what would you spend it on first?', 'What would help your idea most right now?'),
+  ('captain', 'captain-problem', 1, 'problem', 'Who has this problem the most?', 'Be specific: which people, and why them?'),
+  ('captain', 'captain-solution', 2, 'solution', 'Why would customers choose your idea instead of what they do now?', 'What''s one way yours is better?'),
+  ('captain', 'captain-customer', 3, 'customer', 'How did you find out what your customers want?', 'Did you ask, watch or guess?'),
+  ('captain', 'captain-business-model', 4, 'business_model', 'Who pays: the person who uses it, or someone else?', 'Users and buyers can be different people.'),
+  ('captain', 'captain-ask', 5, 'ask', 'What would you do next to learn more about your customers?', 'How could you test your idea with real people?'),
+  ('ivy', 'ivy-problem', 1, 'problem', 'What made you notice this problem?', 'Can you describe a time you saw it happen?'),
+  ('ivy', 'ivy-solution', 2, 'solution', 'How does your solution actually work?', 'Could you explain it in steps?'),
+  ('ivy', 'ivy-customer', 3, 'customer', 'What would customers say after using your idea?', 'Think about how it helps them.'),
+  ('ivy', 'ivy-business-model', 4, 'business_model', 'How could your clever idea make money?', 'What would people pay, and for what?'),
+  ('ivy', 'ivy-ask', 5, 'ask', 'How would you make your idea even better?', 'What''s your plan to improve it?'),
+  ('sam', 'sam-problem', 1, 'problem', 'What happens if nobody solves this problem?', 'What do people lose: time, money, fun?'),
+  ('sam', 'sam-solution', 2, 'solution', 'What could go wrong with your solution, and what would you do?', 'Name one risk and one way to handle it.'),
+  ('sam', 'sam-customer', 3, 'customer', 'What would you do if your first customers didn''t like it?', 'How would you use their feedback?'),
+  ('sam', 'sam-business-model', 4, 'business_model', 'What would you do if it cost more to make than you expected?', 'How could you change the plan?'),
+  ('sam', 'sam-ask', 5, 'ask', 'What is the very next small step you would take?', 'Something you could actually do soon.')
+) as v(persona_key, key, position, section, prompt, hint)
+join public.investor_personas p on p.key = v.persona_key
+on conflict (key) do update
+  set persona_id = excluded.persona_id, position = excluded.position, section = excluded.section,
+      prompt = excluded.prompt, hint = excluded.hint;
+
+delete from public.investor_answer_options o
+using public.investor_questions q
+where q.id = o.question_id
+  and (q.key, o.position) not in (select v.question_key, v.position from (values
+  ('penny-problem', 1),
+  ('penny-problem', 2),
+  ('penny-problem', 3),
+  ('penny-solution', 1),
+  ('penny-solution', 2),
+  ('penny-solution', 3),
+  ('penny-customer', 1),
+  ('penny-customer', 2),
+  ('penny-customer', 3),
+  ('penny-business-model', 1),
+  ('penny-business-model', 2),
+  ('penny-business-model', 3),
+  ('penny-ask', 1),
+  ('penny-ask', 2),
+  ('penny-ask', 3),
+  ('captain-problem', 1),
+  ('captain-problem', 2),
+  ('captain-problem', 3),
+  ('captain-solution', 1),
+  ('captain-solution', 2),
+  ('captain-solution', 3),
+  ('captain-customer', 1),
+  ('captain-customer', 2),
+  ('captain-customer', 3),
+  ('captain-business-model', 1),
+  ('captain-business-model', 2),
+  ('captain-business-model', 3),
+  ('captain-ask', 1),
+  ('captain-ask', 2),
+  ('captain-ask', 3),
+  ('ivy-problem', 1),
+  ('ivy-problem', 2),
+  ('ivy-problem', 3),
+  ('ivy-solution', 1),
+  ('ivy-solution', 2),
+  ('ivy-solution', 3),
+  ('ivy-customer', 1),
+  ('ivy-customer', 2),
+  ('ivy-customer', 3),
+  ('ivy-business-model', 1),
+  ('ivy-business-model', 2),
+  ('ivy-business-model', 3),
+  ('ivy-ask', 1),
+  ('ivy-ask', 2),
+  ('ivy-ask', 3),
+  ('sam-problem', 1),
+  ('sam-problem', 2),
+  ('sam-problem', 3),
+  ('sam-solution', 1),
+  ('sam-solution', 2),
+  ('sam-solution', 3),
+  ('sam-customer', 1),
+  ('sam-customer', 2),
+  ('sam-customer', 3),
+  ('sam-business-model', 1),
+  ('sam-business-model', 2),
+  ('sam-business-model', 3),
+  ('sam-ask', 1),
+  ('sam-ask', 2),
+  ('sam-ask', 3)
+) as v(question_key, position));
+insert into public.investor_answer_options (question_id, position, label, score, feedback)
+select q.id, v.position, v.label, v.score, v.feedback
+from (values
+  ('penny-problem', 1, 'I asked people who have the problem, and most of them said it happens often.', 3, 'Strong! Talking to real people is the best evidence that a problem matters.'),
+  ('penny-problem', 2, 'Every single person in the world has this problem.', 0, 'Investors get a bit wary when they hear ''everyone''. Try saying exactly who has it.'),
+  ('penny-problem', 3, 'I think it''s a problem because it annoys me.', 1, 'Noticing it yourself is a good start. Next, check whether other people have the same problem.'),
+  ('penny-solution', 1, 'Costs don''t matter if the idea is good enough.', 0, 'Even great ideas need to cover their costs, or the business runs out of money.'),
+  ('penny-solution', 2, 'It wouldn''t cost much, I think.', 1, 'Maybe! Try listing each thing you''d need — it''s easy to forget small costs.'),
+  ('penny-solution', 3, 'I listed what I''d need, like materials and time, and guessed the cost of each.', 3, 'Great planning! Breaking costs into parts makes them much easier to work out.'),
+  ('penny-customer', 1, 'I haven''t thought about who would buy it.', 0, 'That''s okay for now — a good next step is to picture your first ten customers.'),
+  ('penny-customer', 2, 'A small group I can really reach, like my class or a club, then grow from there.', 3, 'Sensible! Starting small lets you learn before you grow.'),
+  ('penny-customer', 3, 'Probably millions, once it becomes famous.', 1, 'Dreaming big is fun! Investors also like a first step: who would your very first customers be?'),
+  ('penny-business-model', 1, 'I''d set my price the same as my costs.', 1, 'That''s called breaking even: you wouldn''t lose money, but you wouldn''t make any either.'),
+  ('penny-business-model', 2, 'I''d charge whatever people feel like and work it out later.', 0, 'Penny likes a plan! Try comparing a price with your costs before you start.'),
+  ('penny-business-model', 3, 'My price is more than each one costs to make, so every sale leaves some profit.', 3, 'Exactly right! Price minus cost is the profit on each sale.'),
+  ('penny-ask', 1, 'I''m not sure. I''d probably just keep it.', 0, 'Saving is sensible, but investors want to hear a plan for how the funding helps the business.'),
+  ('penny-ask', 2, 'A big launch party to celebrate.', 1, 'Celebrating is lovely! First, spend on things that make the idea work better.'),
+  ('penny-ask', 3, 'Something that helps me test or improve my idea, like materials for a better prototype.', 3, 'Smart! Spending on testing and improving helps your idea grow.'),
+  ('captain-problem', 1, 'A specific group, like children who walk dogs before school, and I can explain why.', 3, 'Spot on! A specific group is much easier to help than ''everyone''.'),
+  ('captain-problem', 2, 'I don''t really know who has it.', 0, 'No problem — watching and asking people is a great way to find out.'),
+  ('captain-problem', 3, 'Lots of different people, probably.', 1, 'Maybe so! Try picking the group who has it worst — they''ll want your idea most.'),
+  ('captain-solution', 1, 'Mine is better in one clear way, like quicker or cheaper, and I can say how.', 3, 'Excellent! One clear reason is more convincing than lots of vague ones.'),
+  ('captain-solution', 2, 'They wouldn''t have any other choice.', 0, 'Customers almost always have another choice — even doing nothing! Think about why yours wins.'),
+  ('captain-solution', 3, 'Because mine is new.', 1, 'New is exciting, but customers want to know how it''s better for them.'),
+  ('captain-customer', 1, 'I guessed, based on what I would want.', 1, 'Your own view is a fine starting point. Next, check it with a few other people.'),
+  ('captain-customer', 2, 'Customers will want whatever I make.', 0, 'If only! The best businesses make what customers already want.'),
+  ('captain-customer', 3, 'I asked a few people who might use it what they think, and listened to their answers.', 3, 'That''s exactly what real founders do. Listening to customers is a superpower!'),
+  ('captain-business-model', 1, 'I know who pays and why they''d be happy to, even if they''re not the user.', 3, 'Great thinking! Knowing who pays, and why, is the heart of a business model.'),
+  ('captain-business-model', 2, 'Whoever wants to, I suppose.', 1, 'Try naming the person who pays. For example, parents often buy things children use.'),
+  ('captain-business-model', 3, 'I haven''t decided if anyone pays.', 0, 'That''s worth working out. Without someone paying, a business can''t keep going.'),
+  ('captain-ask', 1, 'Let a few people try a simple version, then ask what they''d change.', 3, 'Perfect! Testing a simple version is quick, cheap and teaches you loads.'),
+  ('captain-ask', 2, 'Make lots of them straight away and see what happens.', 1, 'Bold! It''s safer to test a few first, so you don''t make lots of something people don''t want.'),
+  ('captain-ask', 3, 'Nothing. I already know enough.', 0, 'Even big companies keep learning about their customers. There''s always more to find out!'),
+  ('ivy-problem', 1, 'I picked it because it sounded exciting.', 0, 'Excitement is great fuel! Make sure it''s a problem real people have, too.'),
+  ('ivy-problem', 2, 'I saw it happen in real life, and I can describe a time it happened.', 3, 'Love it! A real story makes listeners understand the problem straight away.'),
+  ('ivy-problem', 3, 'Someone told me it might be a problem.', 1, 'Good listening! Can you also see it for yourself, or ask a few more people?'),
+  ('ivy-solution', 1, 'I can explain it step by step, from start to finish.', 3, 'Wonderful! If you can explain it in steps, other people can picture it.'),
+  ('ivy-solution', 2, 'It''s hard to explain, but it''s really cool.', 1, 'It might be very cool! Practise explaining it in three simple steps.'),
+  ('ivy-solution', 3, 'I''ll work out how it works later.', 0, 'Inventors sketch how things work early. Try drawing a quick diagram.'),
+  ('ivy-customer', 1, 'They''d say it fixed their problem, because I designed it around what they need.', 3, 'Brilliant! Designing around customers'' needs is what makes inventions useful.'),
+  ('ivy-customer', 2, 'They''d say it looks nice.', 1, 'Looks matter, but customers care most about whether it solves their problem.'),
+  ('ivy-customer', 3, 'I don''t know what they''d think.', 0, 'Why not find out? Show a sketch to a few people and ask what they think.'),
+  ('ivy-business-model', 1, 'It''s so clever that money will just come in.', 1, 'Clever helps, but you still need a plan for who pays and how much.'),
+  ('ivy-business-model', 2, 'Money isn''t important for an invention.', 0, 'To keep inventing, a business needs to cover its costs. Money helps ideas keep going!'),
+  ('ivy-business-model', 3, 'By selling it for a price people are happy to pay, which is more than it costs to make.', 3, 'Yes! A clever idea plus a sensible price makes a real business.'),
+  ('ivy-ask', 1, 'Add lots of extra features straight away.', 1, 'Extra features can wait. Test the simple version first to see what people really need.'),
+  ('ivy-ask', 2, 'It''s already perfect.', 0, 'Even the best inventions get improved many times. Testing will show you how!'),
+  ('ivy-ask', 3, 'Build a prototype, test it and improve it based on what I learn.', 3, 'That''s the inventor''s loop: build, test, improve. Fantastic!'),
+  ('sam-problem', 1, 'People keep losing time, money or fun, and I can give an example.', 3, 'Very clear. Showing what people lose helps others see why your idea matters.'),
+  ('sam-problem', 2, 'I don''t know.', 0, 'That''s a good thing to think about. Ask someone who has the problem how it affects them.'),
+  ('sam-problem', 3, 'Nothing much, but it would be nice to fix.', 1, 'Nice-to-fix problems can work, but think about how much it really bothers people.'),
+  ('sam-solution', 1, 'I''ve thought of one thing that might go wrong and a way to handle it.', 3, 'Very sensible. Planning for problems shows you''re a careful founder.'),
+  ('sam-solution', 2, 'Nothing could ever go wrong.', 0, 'Things can always go wrong, and that''s okay! Founders plan for it.'),
+  ('sam-solution', 3, 'Something might go wrong, but I''ll worry about it later.', 1, 'Later is fine for some things, but thinking about one risk now can save trouble.'),
+  ('sam-customer', 1, 'Ask them why, then change my idea using what they said.', 3, 'Excellent. Feedback, even when it''s hard to hear, helps you build something better.'),
+  ('sam-customer', 2, 'Look for different customers who might like it.', 1, 'Sometimes that works! It''s worth asking the first customers why, too.'),
+  ('sam-customer', 3, 'Give up on the idea.', 0, 'Most founders hear ''no'' lots of times. Each ''no'' teaches you something.'),
+  ('sam-business-model', 1, 'Keep going and hope it works out.', 1, 'Hope helps, but checking your numbers again is safer.'),
+  ('sam-business-model', 2, 'Just spend more without checking the numbers.', 0, 'Spending more without checking could mean losing money. Always look at the numbers first.'),
+  ('sam-business-model', 3, 'Look for cheaper materials or change my price, then check the numbers again.', 3, 'Calm and clever. Adjusting costs or price is exactly how businesses handle surprises.'),
+  ('sam-ask', 1, 'Wait until someone else does it first.', 0, 'Waiting means someone else might solve it. A tiny first step is a great start!'),
+  ('sam-ask', 2, 'One small, clear step I could do this week, like sketching it or asking five people.', 3, 'Perfect. Small, clear steps are how big ideas get started.'),
+  ('sam-ask', 3, 'Start a huge company straight away.', 1, 'Big dreams are great! Break them into a small first step you can do soon.')
+) as v(question_key, position, label, score, feedback)
+join public.investor_questions q on q.key = v.question_key
+on conflict (question_id, position) do update
+  set label = excluded.label, score = excluded.score, feedback = excluded.feedback;

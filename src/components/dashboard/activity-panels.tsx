@@ -196,35 +196,96 @@ export function IdeasPanel({ activity, childId }: { activity: ChildActivity; chi
   );
 }
 
-export function SimulationsPanel({ activity }: { activity: ChildActivity }) {
+export function SimulationsPanel({ activity, childId }: { activity: ChildActivity; childId: string }) {
   return (
     <Panel icon={ChartLine} tone="bg-mint-soft" title="Simulations">
       {activity.simulationsStarted === 0 ? (
-        <EmptyNote comingSoon="Startup Simulator is coming soon">No simulations played yet.</EmptyNote>
+        <EmptyNote>No simulations played yet. Results from the Startup Simulator appear here.</EmptyNote>
       ) : (
-        <dl className="grid grid-cols-2 gap-3">
-          <StatTile label="Completed" value={activity.simulationsCompleted} tone="bg-mint-soft" />
-          <StatTile label="Started" value={activity.simulationsStarted} />
-        </dl>
+        <>
+          <dl className="grid grid-cols-2 gap-3">
+            <StatTile label="Completed" value={activity.simulationsCompleted} tone="bg-mint-soft" />
+            <StatTile label="In progress" value={activity.simulationsStarted - activity.simulationsCompleted} />
+          </dl>
+          <ul className="mt-4 divide-y divide-border">
+            {activity.recentSimulations.map((s) => (
+              <li key={s.id} className="py-2.5">
+                {s.status === "completed" ? (
+                  <Link
+                    href={`/parent/children/${childId}/simulations/${s.id}`}
+                    className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md hover:bg-muted"
+                  >
+                    <span className="min-w-0 font-semibold text-ink underline-offset-4 [overflow-wrap:anywhere] hover:underline">{s.name}</span>
+                    <span className="text-sm text-muted-foreground">
+                      {s.profit !== null && s.profit < 0 ? "Loss" : "Profit"} {s.profit?.toLocaleString("en")} FB · {s.unitsSold} sold ·{" "}
+                      {dateFormat.format(new Date(s.date))}
+                    </span>
+                  </Link>
+                ) : (
+                  <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                    <span className="min-w-0 font-semibold text-ink [overflow-wrap:anywhere]">{s.name}</span>
+                    <span className="text-sm text-muted-foreground">In progress · started {dateFormat.format(new Date(s.date))}</span>
+                  </div>
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="mt-3 text-xs text-muted-foreground">Founder Bucks (FB) are pretend, virtual units used for learning.</p>
+        </>
       )}
     </Panel>
   );
 }
 
-export function PitchesPanel({ activity }: { activity: ChildActivity }) {
+const pitchStateLabel = { draft: "Draft", completed: "Completed", revising: "Revising" } as const;
+
+export function PitchesPanel({ activity, childId }: { activity: ChildActivity; childId: string }) {
+  const { pitch } = activity;
   return (
-    <Panel icon={Presentation} tone="bg-sky-soft" title="Pitch presentations">
-      {activity.pitchDecks.length === 0 ? (
-        <EmptyNote comingSoon="Pitch Studio is coming soon">No pitches created yet.</EmptyNote>
+    <Panel icon={Presentation} tone="bg-sky-soft" title="Pitches & Investor Room">
+      {pitch.pitchesCreated === 0 ? (
+        <EmptyNote>No pitches created yet. Pitches your child builds in Pitch Studio, and their Investor Room practice, appear here.</EmptyNote>
       ) : (
-        <ul className="divide-y divide-border">
-          {activity.pitchDecks.map((deck) => (
-            <li key={deck.id} className="flex items-center justify-between gap-3 py-2.5">
-              <span className="font-semibold text-ink">{deck.title}</span>
-              <span className="text-sm text-muted-foreground">{deck.status === "ready" ? "Ready" : "Draft"}</span>
-            </li>
-          ))}
-        </ul>
+        <>
+          <dl className="grid grid-cols-3 gap-3">
+            <StatTile label="Pitches created" value={pitch.pitchesCreated} />
+            <StatTile label="Completed" value={pitch.pitchesCompleted} tone="bg-sky-soft" />
+            <StatTile label="Practices" value={pitch.practicesCompleted} tone="bg-grape-soft" />
+          </dl>
+          <h3 className="mt-5 text-sm font-bold uppercase tracking-[0.12em] text-muted-foreground">Recent pitch activity</h3>
+          <ul className="mt-1 divide-y divide-border">
+            {pitch.recent.map((p) => {
+              const detail = [
+                pitchStateLabel[p.state] + (p.latestVersion ? ` (v${p.latestVersion})` : ""),
+                p.practices ? `${p.practices} practice${p.practices === 1 ? "" : "s"}, best ${p.bestScore}/100` : null,
+                dateFormat.format(new Date(p.updatedAt)),
+              ]
+                .filter(Boolean)
+                .join(" · ");
+              return (
+                <li key={p.deckId} className="py-2.5">
+                  {p.latestVersion ? (
+                    <Link
+                      href={`/parent/children/${childId}/pitches/${p.deckId}`}
+                      className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 rounded-md hover:bg-muted"
+                    >
+                      <span className="min-w-0 font-semibold text-ink underline-offset-4 [overflow-wrap:anywhere] hover:underline">{p.title}</span>
+                      <span className="text-sm text-muted-foreground">{detail}</span>
+                    </Link>
+                  ) : (
+                    <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1">
+                      <span className="min-w-0 font-semibold text-ink [overflow-wrap:anywhere]">{p.title}</span>
+                      <span className="text-sm text-muted-foreground">{detail}</span>
+                    </div>
+                  )}
+                </li>
+              );
+            })}
+          </ul>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Investor Room scores are practice feedback from pretend investors, worked out with fixed rules. No real investors are involved.
+          </p>
+        </>
       )}
     </Panel>
   );

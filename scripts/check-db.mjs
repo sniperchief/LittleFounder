@@ -162,7 +162,7 @@ await as("authenticated", A, async () => {
   await expectError(
     "adult A cannot link a deck to B's project (composite FK)",
     () => db.query(`insert into public.pitch_decks (child_id, project_id, title) values ($1, $2, 'Deck')`, [childA, projectB]),
-    /foreign key|row-level security/,
+    /foreign key|row-level security|permission denied/,
   );
   await expectError("adult A cannot modify B's project", () =>
     db.query(`update public.startup_projects set name = 'Hijacked' where id = $1`, [projectB]), /permission denied/);
@@ -340,7 +340,7 @@ const [counts] = await rows(`select
 check("curriculum seeded: 6 modules, 18 lessons, 18 activities, 30 questions",
   counts.modules === 6 && counts.lessons === 18 && counts.activities === 18 && counts.questions === 30, JSON.stringify(counts));
 check("every quiz question has exactly one correct option", counts.bad_questions === 0);
-check("12 achievements and 1 milestone certificate seeded", counts.achievements === 12 && counts.certs === 1);
+check("15 achievements and 1 milestone certificate seeded", counts.achievements === 15 && counts.certs === 1);
 for (const role of ["anon", "authenticated"]) {
   await as(role, role === "anon" ? null : B, async () => {
     check(`${role} can read lessons and activity prompts`, (await rows("select l.key, a.config from public.lessons l join public.lesson_activities a on a.lesson_id = l.id")).length === 18);
@@ -509,6 +509,377 @@ await as("authenticated", A, async () => {
 });
 await as("anon", null, () =>
   expectError("anonymous visitors cannot save ideas", () => db.query("select public.save_idea(null, '{}')"), /permission denied/));
+
+console.log("\nStartup Simulator: calculation model (Phase 5)");
+const [eco] = await rows("select id, demand_params as p from public.simulator_scenarios where key = 'ecobottle'");
+check("EcoBottle and My idea challenges are seeded with a 1,000 FB budget",
+  (await rows("select key from public.simulator_scenarios where starting_budget = 1000 order by key")).map((r) => r.key).join() === "ecobottle,my-idea");
+// Independent reference implementation of docs/STARTUP_SIMULATOR.md (not shared with the app).
+const PRICES = [6, 8, 10, 12, 15];
+const QUANTITIES = [50, 100, 150, 200, 250];
+const INTEREST = { 6: 160, 8: 130, 10: 100, 12: 70, 15: 40 };
+const MARKETING = { none: [0, 0], posters: [50, 20], "fair-stall": [100, 45], radio: [200, 80] };
+const reference = (price, quantity, mk) => {
+  const [mCost, reach] = MARKETING[mk];
+  const total = quantity * 4 + mCost;
+  if (total > 1000) return { status: "over_budget", total_cost: total, over_by: total - 1000 };
+  const interested = INTEREST[price] + reach;
+  const sold = Math.min(quantity, interested);
+  const revenue = sold * price;
+  return { status: "ok", interested, units_sold: sold, unsold: quantity - sold, revenue, production_cost: quantity * 4,
+    marketing_cost: mCost, total_cost: total, profit: revenue - total, cash_remaining: 1000 - total + revenue };
+};
+const outcome = async (price, quantity, mk) =>
+  (await rows("select public.simulator_outcome($1::jsonb, $2, $3, $4) as r", [JSON.stringify(eco.p), price, quantity, mk]))[0].r;
+let comboMismatches = [];
+let combos = 0, overBudget = 0, cashIsBudgetPlusProfit = true, soldWithinBounds = true, flagsConsistent = true;
+for (const price of PRICES) for (const quantity of QUANTITIES) for (const mk of Object.keys(MARKETING)) {
+  combos++;
+  const got = await outcome(price, quantity, mk);
+  const want = reference(price, quantity, mk);
+  const keys = want.status === "ok" ? Object.keys(want) : ["status", "total_cost", "over_by"];
+  if (keys.some((k) => got[k] !== want[k])) comboMismatches.push(`${price}/${quantity}/${mk}`);
+  if (got.status === "over_budget") { overBudget++; continue; }
+  if (got.cash_remaining - got.profit !== 1000) cashIsBudgetPlusProfit = false;
+  if (got.units_sold > quantity || got.units_sold > got.interested) soldWithinBounds = false;
+  const fb = got.feedback;
+  if ((got.interested > quantity) !== fb.includes("sold-out") || (quantity > got.interested) !== fb.includes("leftover")
+      || fb[0] !== got.outcome || (got.profit > 0 ? "profit" : got.profit < 0 ? "loss" : "break-even") !== got.outcome) flagsConsistent = false;
+}
+check("all 100 predefined option combinations match the documented formulas", combos === 100 && comboMismatches.length === 0, comboMismatches.slice(0, 5).join(" "));
+check("exactly the 15 combinations costing over 1,000 FB are refused as over budget", overBudget === 15);
+check("cash remaining = starting budget + profit (never shown as profit)", cashIsBudgetPlusProfit);
+check("units sold never exceed bottles made or interested customers", soldWithinBounds);
+check("outcome and sold-out / leftover feedback are consistent", flagsConsistent);
+const ex1 = await outcome(10, 100, "posters");
+check("worked example: 10 FB × 100 bottles + posters → 550 FB profit, 1,550 FB cash",
+  ex1.units_sold === 100 && ex1.revenue === 1000 && ex1.total_cost === 450 && ex1.profit === 550 && ex1.cash_remaining === 1550 && ex1.feedback.includes("sold-out"));
+const ex2 = await outcome(15, 250, "none");
+check("worked example: 15 FB × 250 bottles → 40 sold, 400 FB loss, 600 FB cash",
+  ex2.units_sold === 40 && ex2.profit === -400 && ex2.cash_remaining === 600 && ex2.outcome === "loss" && ex2.feedback.includes("leftover") && ex2.feedback.includes("price-high"));
+const ex3 = await outcome(6, 200, "radio");
+check("worked example: 6 FB × 200 bottles + radio → sold out, 200 FB profit",
+  ex3.interested === 240 && ex3.units_sold === 200 && ex3.profit === 200 && ex3.feedback.includes("price-low") && ex3.feedback.includes("marketing-paid-off"));
+const ex4 = await outcome(12, 50, "radio");
+check("marketing that brings no extra sales is flagged as not worth it", ex4.units_sold === 50 && ex4.feedback.includes("marketing-not-worth-it"));
+const ex5 = await outcome(10, 250, "posters");
+check("over-budget result explains by how much", ex5.status === "over_budget" && ex5.total_cost === 1050 && ex5.over_by === 50);
+for (const [label, args] of [["price not on the list", [7, 100, "none"]], ["quantity not on the list", [10, 75, "none"]],
+  ["unknown marketing", [10, 100, "tv-advert"]], ["missing values", [null, 100, "none"]], ["negative quantity", [10, -50, "none"]]]) {
+  check(`invalid input refused: ${label}`, (await outcome(...args)).status === "invalid");
+}
+
+console.log("\nStartup Simulator: attempts & security (Phase 5)");
+const runSim = (id, price, quantity, mk) => fn("select public.run_simulation($1, $2, $3, $4) as r", [id, price, quantity, mk]);
+const startSim = (key, project = null) => fn("select public.start_simulation($1, $2) as r", [key, project]);
+// Give B's child one created idea to simulate (seeded directly; Idea Lab writes go through save_idea).
+await db.query(`update public.startup_projects set problem_category = 'pets', problem = 'Pets get bored', solution_type = 'product',
+  solution = 'A puzzle feeder', target_customer_tags = '{pet-owners}', buyer = 'parents', value_statement = 'Keeps dogs busy',
+  status = 'ready' where id = $1`, [projectB]);
+await as("authenticated", B, async () => {
+  check("starting a simulation needs active Child Mode", (await startSim("ecobottle")).status === "not_in_child_mode");
+  await expectError("sessions cannot be inserted directly", () =>
+    db.query("insert into public.simulator_sessions (child_id, scenario_id, seed, starting_budget) values ($1, $2, 0, 1000000)", [childB, eco.id]), /permission denied/);
+  check("B enters Child Mode for Phase 5", (await fn("select public.enter_child_mode($1) as r", [childB])) === "ok");
+  const s1 = await startSim("ecobottle");
+  check("EcoBottle attempt starts for the active child", s1.status === "ok" && s1.resumed === false);
+  check("starting again resumes the unfinished attempt", (await startSim("ecobottle")).id === s1.id);
+  check("EcoBottle cannot be tied to a project", (await startSim("ecobottle", projectB)).status === "invalid");
+  check("My idea needs one of the child's created ideas", (await startSim("my-idea")).status === "idea_required");
+  check("another family's idea cannot be used", (await startSim("my-idea", otherFamilyIdea)).status === "idea_required");
+  check("a sibling's idea cannot be used", (await startSim("my-idea", siblingIdea)).status === "idea_required");
+  const ideaRun = await startSim("my-idea", projectB);
+  check("My idea attempt starts from the child's own created idea", ideaRun.status === "ok");
+  const [sessRow] = await rows("select child_id, starting_budget from public.simulator_sessions where id = $1", [s1.id]);
+  check("session belongs to the active child with the 1,000 FB budget", sessRow.child_id === childB && sessRow.starting_budget === 1000);
+  check("valid draft choices are saved", (await fn("select public.save_simulation_draft($1, $2::jsonb) as r", [s1.id, JSON.stringify({ price: 10, quantity: 100, step: 3 })])).status === "ok");
+  check("draft values outside the options are refused", (await fn("select public.save_simulation_draft($1, $2::jsonb) as r", [s1.id, JSON.stringify({ price: 7 })])).status === "invalid");
+  check("unknown draft fields are refused", (await fn("select public.save_simulation_draft($1, $2::jsonb) as r", [s1.id, JSON.stringify({ budget: 999999 })])).status === "invalid");
+  check("spending beyond the budget is refused", (await runSim(s1.id, 15, 250, "radio")).status === "over_budget");
+  check("manipulated price is refused", (await runSim(s1.id, 1000, 100, "none")).status === "invalid");
+  check("manipulated quantity is refused", (await runSim(s1.id, 10, 1, "none")).status === "invalid");
+  check("refused runs leave the attempt open", (await rows("select status from public.simulator_sessions where id = $1", [s1.id]))[0].status === "active");
+  check("reflection waits until the attempt is complete", (await fn("select public.set_simulation_reflection($1, 'price') as r", [s1.id])).status === "not_completed");
+  const r1 = await runSim(s1.id, 10, 100, "posters");
+  check("a valid run completes with server-calculated results", r1.status === "ok" && r1.profit === 550 && r1.cash_remaining === 1550);
+  check("the first completed run awards First Business Run", r1.achievements.includes("first-business-run"), JSON.stringify(r1.achievements));
+  const [stored] = await rows("select s.status, s.final_summary, r.units_sold, r.revenue::int, r.profit::int, r.budget_after::int, r.feedback_keys from public.simulator_sessions s join public.simulator_rounds r on r.session_id = s.id where s.id = $1", [s1.id]);
+  check("results are stored on the attempt and its round", stored.status === "completed" && stored.final_summary.profit === 550 && stored.units_sold === 100 && stored.revenue === 1000 && stored.profit === 550 && stored.budget_after === 1550);
+  check("a completed attempt cannot be run again", (await runSim(s1.id, 6, 50, "none")).status === "already_completed");
+  check("a completed attempt's draft cannot be changed", (await fn("select public.save_simulation_draft($1, $2::jsonb) as r", [s1.id, JSON.stringify({ price: 6 })])).status === "already_completed");
+  check("reflection choices are validated", (await fn("select public.set_simulation_reflection($1, 'my phone number') as r", [s1.id])).status === "invalid");
+  check("the reflection is saved", (await fn("select public.set_simulation_reflection($1, 'price') as r", [s1.id])).status === "ok");
+  check("the reflection cannot be changed afterwards", (await fn("select public.set_simulation_reflection($1, 'same') as r", [s1.id])).status === "already_answered");
+  await expectError("clients cannot update attempts directly", () =>
+    db.query("update public.simulator_sessions set final_summary = '{}' where id = $1", [s1.id]), /permission denied/);
+  const s2 = await startSim("ecobottle");
+  check("a new attempt starts after completing one", s2.status === "ok" && s2.id !== s1.id && s2.resumed === false);
+  const r2 = await runSim(s2.id, 15, 250, "none");
+  check("a loss is reported as a loss", r2.status === "ok" && r2.profit === -400 && r2.outcome === "loss");
+  check("repeat attempts don't award duplicate badges", r2.achievements.length === 0 &&
+    (await rows("select count(*)::int n from public.child_achievements ca join public.achievements a on a.id = ca.achievement_id where ca.child_id = $1 and a.key = 'first-business-run'", [childB]))[0].n === 1);
+  check("both attempts are kept for comparison", (await rows("select count(*)::int n from public.simulator_sessions where child_id = $1 and status = 'completed'", [childB]))[0].n === 2);
+  check("exit Child Mode (Phase 5)", (await fn("select public.exit_child_mode('2580') as r")) === "ok");
+  check("the parent can read their child's simulation history (read-only)", (await rows("select id from public.simulator_sessions where child_id = $1", [childB])).length === 3);
+  globalThis.__s1 = s1.id;
+});
+await expectError("completed attempts are immutable even for the server", () =>
+  db.query("update public.simulator_sessions set final_summary = '{\"profit\": 999999}' where id = $1", [globalThis.__s1]), /cannot be changed/);
+await expectError("stored round results are immutable", () =>
+  db.query("update public.simulator_rounds set profit = 999999 where session_id = $1", [globalThis.__s1]), /cannot be changed/);
+check("the reflection survives (no silent changes)", (await rows("select reflection from public.simulator_sessions where id = $1", [globalThis.__s1]))[0].reflection === "price");
+await as("authenticated", A, async () => {
+  check("another family cannot read B's simulations", (await rows("select 1 from public.simulator_sessions union all select 1 from public.simulator_rounds")).length === 0);
+  check("another family cannot run B's attempt outside Child Mode", (await runSim(globalThis.__s1, 10, 100, "none")).status === "not_in_child_mode");
+});
+await db.query("insert into public.simulator_sessions (child_id, scenario_id, seed, starting_budget, status) select $1, $2, 0, 1000, 'abandoned' from generate_series(1, 20)", [childB, eco.id]);
+await as("authenticated", B, async () => {
+  await db.query("select public.enter_child_mode($1)", [childB]);
+  check("starting attempts is rate-limited (20 per hour)", (await startSim("ecobottle")).status === "rate_limited");
+  await db.query("select public.exit_child_mode('2580')");
+});
+await as("anon", null, () =>
+  expectError("anonymous visitors cannot run simulations", () => db.query("select public.run_simulation(gen_random_uuid(), 10, 100, 'none')"), /permission denied/));
+
+console.log("\nPitch Studio & Investor Room: rules match the app (Phase 6)");
+const { pitchPrivacyIssue, earnsOwnWordsBonus } = await import("../src/content/pitch-studio.ts");
+const privacySamples = [
+  ["Email me at kid@example.com", true], ["Call 0123 456 7890", true], ["Text +44 7700 900123", true],
+  ["See www.puzzlepup.test", true], ["Visit https://example.org/shop", true], ["Find us at puzzlepup.com", true],
+  ["I live at 12 Oak Street", true], ["Follow @puzzlepup for updates", true],
+  ["We'd sell 100 feeders for 10 FB each", false], ["Dogs get bored when everyone is out", false],
+  ["It costs 4 FB to make, e.g. cardboard", false], ["Mr. Lee's class would love it", false], ["", false],
+];
+const privacyMismatch = [];
+for (const [text, expected] of privacySamples) {
+  const sql = (await rows("select public.pitch_personal_info($1) as r", [text]))[0].r;
+  if (sql !== expected || Boolean(pitchPrivacyIssue(text)) !== expected) privacyMismatch.push(text);
+}
+check("personal-details check flags emails, phones, links, addresses and handles (database = app)", privacyMismatch.length === 0, privacyMismatch.join(" | "));
+const bonusSamples = [
+  ["", 0], ["It keeps dogs busy", 0], ["dogs dogs dogs dogs dogs dogs", 0], ["12 34 56 78 90 11", 0],
+  ["I asked eight dog owners and six said yes", 1], ["one two three four five six", 1], ["a a b b c c d", 1],
+];
+const bonusMismatch = [];
+for (const [text, expected] of bonusSamples) {
+  const sql = (await rows("select public.own_words_bonus($1) as r", [text]))[0].r;
+  if (sql !== expected || (earnsOwnWordsBonus(text) ? 1 : 0) !== expected) bonusMismatch.push(text || "(empty)");
+}
+check("own-words bonus rule (6+ words, 4+ different) matches in the database and the app", bonusMismatch.length === 0, bonusMismatch.join(" | "));
+const [bank] = await rows(`select (select count(*)::int from public.investor_personas) personas,
+  (select count(*)::int from public.investor_questions) questions,
+  (select count(*)::int from public.investor_personas p where (select string_agg(q.section, ',' order by q.position) from public.investor_questions q where q.persona_id = p.id)
+     <> 'problem,solution,customer,business_model,ask') bad_personas,
+  (select count(*)::int from public.investor_questions q where (select count(*) from public.investor_answer_options o where o.question_id = q.id and o.score = 3) <> 1
+     or (select count(*) from public.investor_answer_options o where o.question_id = q.id) <> 3) bad_questions`);
+check("4 pretend investors seeded, each asking one question per rubric criterion", bank.personas === 4 && bank.questions === 20 && bank.bad_personas === 0);
+check("every investor question has 3 answers with exactly one strong answer", bank.bad_questions === 0);
+for (const role of ["anon", "authenticated"]) {
+  await as(role, role === "anon" ? null : B, async () => {
+    check(`${role} can read personas, questions and answer labels`,
+      (await rows("select o.label from public.investor_answer_options o join public.investor_questions q on q.id = o.question_id")).length === 60);
+    await expectError(`${role} cannot read investor answer scores`, () => db.query("select score from public.investor_answer_options"), /permission denied/);
+    await expectError(`${role} cannot read investor feedback before answering`, () => db.query("select feedback from public.investor_answer_options"), /permission denied/);
+  });
+}
+
+console.log("\nPitch Studio: building, versions & security (Phase 6)");
+const startPitch = (project, prefill = {}) => fn("select public.start_pitch($1, $2::jsonb) as r", [project, JSON.stringify(prefill)]);
+const savePitch = (id, fields, step = null, finish = false) =>
+  fn("select public.save_pitch($1, $2::jsonb, $3::smallint, $4) as r", [id, JSON.stringify(fields), step, finish]);
+const startPractice = (deck, persona) => fn("select public.start_investor_practice($1, $2) as r", [deck, persona]);
+const answer = (sess, q, o, note = "") => fn("select public.answer_investor_question($1, $2, $3, $4) as r", [sess, q, o, note]);
+const badgeCount = async (key) => (await rows(
+  "select count(*)::int n from public.child_achievements ca join public.achievements a on a.id = ca.achievement_id where ca.child_id = $1 and a.key = $2", [childB, key]))[0].n;
+// Answer keys are read up front as the superuser — clients can never read them.
+const answerKey = async (persona) => (await rows(
+  `select q.id::text qid, q.section, json_agg(json_build_object('id', o.id, 'score', o.score) order by o.position) opts
+   from public.investor_questions q join public.investor_personas p on p.id = q.persona_id
+   join public.investor_answer_options o on o.question_id = q.id where p.key = $1 group by q.id, q.section, q.position order by q.position`, [persona]));
+const penny = await answerKey("penny");
+const ivy = await answerKey("ivy");
+const opt = (q, score) => q.opts.find((o) => o.score === score).id;
+const draftIdeaB = (await rows("select id from public.startup_projects where child_id = $1 and status = 'draft' limit 1", [childB]))[0].id;
+const prefill = {
+  title: "Plant Pals", tagline: "Plant Pals keeps pets busy", icon_key: "paw", problem: "Pets get bored when everyone is out",
+  problem_extra: "Who has it: families with dogs.", solution: "", business_model: "Parents or carers would pay for it.",
+};
+const fullPitch = {
+  solution: "A puzzle feeder made from recycled boxes", customer: "Pet owners and families with busy days",
+  business_model: "We sell each feeder for more than it costs to make", ask: "Test ten feeders with friends' dogs",
+};
+let deck, practice1;
+await as("authenticated", B, async () => {
+  check("starting a pitch needs active Child Mode", (await startPitch(projectB)).status === "not_in_child_mode");
+  await expectError("pitch decks cannot be inserted directly", () =>
+    db.query("insert into public.pitch_decks (child_id, project_id, title) values ($1, $2, 'Direct')", [childB, projectB]), /permission denied/);
+  await expectError("pitch versions cannot be written directly", () =>
+    db.query("insert into public.pitch_versions (deck_id, child_id, version, snapshot) values (gen_random_uuid(), $1, 1, '{}')", [childB]), /permission denied/);
+  await expectError("practice results cannot be written directly", () =>
+    db.query("insert into public.investor_sessions (child_id, deck_id, persona_id, pitch_version_id, deck_snapshot) values ($1, gen_random_uuid(), gen_random_uuid(), gen_random_uuid(), '{}')", [childB]), /permission denied/);
+  check("B enters Child Mode for Phase 6", (await fn("select public.enter_child_mode($1) as r", [childB])) === "ok");
+
+  check("another family's idea cannot be pitched", (await startPitch(otherFamilyIdea)).status === "idea_required");
+  check("a sibling's idea cannot be pitched", (await startPitch(siblingIdea)).status === "idea_required");
+  check("a prefill containing a phone number is refused", (await startPitch(projectB, { problem: "Call 0123 456 7890" })).status === "personal_info");
+  check("a prefill with unknown fields is refused", (await startPitch(projectB, { child_id: childA })).status === "invalid");
+  check("refused starts create nothing", (await rows("select count(*)::int n from public.pitch_decks")).at(0).n === 0);
+  const started = await startPitch(projectB, prefill);
+  deck = started.id;
+  check("a pitch starts from the child's own Idea Lab idea", started.status === "ok" && started.resumed === false);
+  const [d] = await rows("select child_id, project_id, status, title, tagline, icon_key from public.pitch_decks where id = $1", [deck]);
+  const slides = await rows("select section, content from public.pitch_slides where deck_id = $1 order by position", [deck]);
+  check("the pitch belongs to the active child and is linked to the idea", d.child_id === childB && d.project_id === projectB && d.status === "draft");
+  check("five section slides are created with the prefilled content",
+    slides.map((s) => s.section).join() === "problem,solution,customer,business_model,ask" && d.title === "Plant Pals" && d.icon_key === "paw" &&
+    slides[0].content.main === prefill.problem && slides[0].content.extra === prefill.problem_extra && slides[3].content.main === prefill.business_model);
+  check("starting again for the same idea resumes the same pitch", (await startPitch(projectB, prefill)).id === deck);
+
+  check("over-long section text is refused", (await savePitch(deck, { problem: "x".repeat(281) })).status === "invalid");
+  check("over-long extra text is refused", (await savePitch(deck, { problem_extra: "x".repeat(201) })).status === "invalid");
+  check("contact details are refused (email)", (await savePitch(deck, { solution: "Email a@b.co to order" })).status === "personal_info");
+  check("links are refused", (await savePitch(deck, { tagline: "See puzzlepup.com" })).status === "personal_info");
+  check("unknown fields are refused (e.g. child_id)", (await savePitch(deck, { child_id: childA })).status === "invalid");
+  check("non-text values are refused", (await savePitch(deck, { problem: 5 })).status === "invalid");
+  check("icons and colours must be on the preset lists", (await savePitch(deck, { icon_key: "skull" })).status === "invalid" &&
+    (await savePitch(deck, { theme_key: "neon" })).status === "invalid");
+  check("steps outside 1–6 are refused", (await savePitch(deck, {}, 7)).status === "invalid");
+  const saved = await savePitch(deck, { solution: fullPitch.solution }, 3);
+  check("a draft section saves and remembers the step", saved.status === "ok" && saved.deck_status === "draft" &&
+    (await rows("select builder_step from public.pitch_decks where id = $1", [deck]))[0].builder_step === 3);
+  const incomplete = await savePitch(deck, {}, 6, true);
+  check("finishing needs every required section", incomplete.status === "incomplete" &&
+    incomplete.missing.join() === "customer" && !incomplete.missing.includes("ask"));
+  check("finishing an incomplete pitch creates no version", (await rows("select count(*)::int n from public.pitch_versions where deck_id = $1", [deck]))[0].n === 0);
+  check("progress is kept after a refused finish", (await rows("select content->>'main' m from public.pitch_slides where deck_id = $1 and section = 'solution'", [deck]))[0].m === fullPitch.solution);
+  check("a too-short required answer still counts as missing", (await savePitch(deck, { customer: "Kids" }, 6, true)).missing?.join() === "customer");
+  check("practice needs a finished pitch", (await startPractice(deck, "penny")).status === "pitch_not_finished");
+  const done = await savePitch(deck, { ...fullPitch, ask: "" }, 6, true);
+  check("a complete pitch finishes as version 1 (the optional section can be empty)", done.status === "ok" && done.version === 1 && done.deck_status === "ready");
+  check("the first finished pitch awards First Pitch", done.achievements.includes("first-pitch"), JSON.stringify(done.achievements));
+  const again = await savePitch(deck, {}, 6, true);
+  check("finishing again without changes adds no version or badge", again.version === 1 && again.achievements.length === 0 &&
+    (await rows("select count(*)::int n from public.pitch_versions where deck_id = $1", [deck]))[0].n === 1);
+
+  check("unknown pretend investors are refused", (await startPractice(deck, "dragon")).status === "invalid");
+  const p1 = await startPractice(deck, "penny");
+  practice1 = p1.id;
+  check("a practice starts with Penny on version 1", p1.status === "ok" && p1.resumed === false);
+  check("starting again resumes the unfinished practice", (await startPractice(deck, "penny")).id === practice1);
+  const [sess] = await rows("select child_id, question_ids, deck_snapshot, decision from public.investor_sessions where id = $1", [practice1]);
+  check("the practice asks Penny's 5 questions in order and keeps a copy of the pitch",
+    sess.child_id === childB && sess.question_ids.join() === penny.map((q) => q.qid).join() && sess.deck_snapshot.version === 1 &&
+    sess.deck_snapshot.sections.solution.main === fullPitch.solution && sess.decision === null);
+  check("questions must be answered in order", (await answer(practice1, penny[1].qid, opt(penny[1], 3))).status === "out_of_order");
+  check("another investor's question is refused", (await answer(practice1, ivy[0].qid, opt(ivy[0], 3))).status === "invalid");
+  check("an answer from a different question is refused", (await answer(practice1, penny[0].qid, opt(penny[1], 3))).status === "invalid");
+  check("personal details in a typed answer are refused", (await answer(practice1, penny[0].qid, opt(penny[0], 3), "Ring me on 07700 900123")).status === "personal_info");
+  check("over-long typed answers are refused", (await answer(practice1, penny[0].qid, opt(penny[0], 3), "word ".repeat(45))).status === "invalid");
+  check("refused answers store nothing", (await rows("select count(*)::int n from public.investor_responses where session_id = $1", [practice1]))[0].n === 0);
+  const a1 = await answer(practice1, penny[0].qid, opt(penny[0], 3), "I asked eight dog owners and six said yes");
+  check("a strong answer with own words scores 3 + 1 bonus, with feedback", a1.status === "ok" && a1.score === 3 && a1.bonus === 1 && a1.feedback.length > 0 && a1.stronger === null && a1.completed === false);
+  check("an answered question cannot be answered again", (await answer(practice1, penny[0].qid, opt(penny[0], 0))).status === "out_of_order");
+  const a2 = await answer(practice1, penny[1].qid, opt(penny[1], 1));
+  check("a partial answer scores 1 and shows a stronger answer", a2.score === 1 && a2.bonus === 0 && typeof a2.stronger === "string");
+  const a3 = await answer(practice1, penny[2].qid, opt(penny[2], 0), "dogs dogs dogs dogs dogs dogs");
+  check("repeating one word doesn't earn the own-words bonus", a3.score === 0 && a3.bonus === 0);
+  await answer(practice1, penny[3].qid, opt(penny[3], 3), "my price is more than the cost to make");
+  const a5 = await answer(practice1, penny[4].qid, opt(penny[4], 3));
+  // Independent reference: criteria 4, 1, 0, 4, 3 → 12 of 20 points → 60 → "promising".
+  check("the last answer completes the practice with the documented rubric score",
+    a5.completed === true && a5.points === 12 && a5.total_score === 60 && a5.band === "promising" &&
+    JSON.stringify(a5.sub_scores) === JSON.stringify({ ask: 3, problem: 4, customer: 0, solution: 1, business_model: 4 }), JSON.stringify(a5));
+  check("the first completed practice awards Confident Founder", a5.achievements.includes("confident-founder"), JSON.stringify(a5.achievements));
+  const [stored] = await rows("select points, total_score, band, tips_keys, sub_scores, decision, completed_at from public.investor_sessions where id = $1", [practice1]);
+  check("the result is stored with improvement tips for weaker criteria",
+    stored.points === 12 && stored.total_score === 60 && stored.tips_keys.join() === "solution,customer,own-words" && stored.completed_at !== null);
+  check("pretend investors never record an investment decision", stored.decision === null);
+  const reviews = await rows("select score, bonus, note, review from public.investor_responses where session_id = $1 order by created_at", [practice1]);
+  check("each answer keeps its question, choice and feedback for history",
+    reviews.length === 5 && reviews.every((r) => r.review.prompt && r.review.answer && r.review.feedback) && reviews[0].note.startsWith("I asked"));
+  check("a completed practice cannot be answered again", (await answer(practice1, penny[4].qid, opt(penny[4], 3))).status === "already_completed");
+  await expectError("clients cannot change practice results", () =>
+    db.query("update public.investor_sessions set total_score = 100 where id = $1", [practice1]), /permission denied/);
+  await expectError("clients cannot change pitch slides directly", () =>
+    db.query("update public.pitch_slides set content = '{}' where deck_id = $1", [deck]), /permission denied/);
+
+  // Revising a finished pitch.
+  const edit = await savePitch(deck, { problem: "Dogs chew things when they're bored at home" }, 1);
+  check("editing a finished pitch marks it as revising (no silent overwrite)", edit.deck_status === "draft" && edit.version === 1);
+  const [v1] = await rows("select snapshot from public.pitch_versions where deck_id = $1 and version = 1", [deck]);
+  check("version 1 keeps the original content", v1.snapshot.sections.problem.main === prefill.problem);
+  check("the earlier practice keeps its score and its copy of version 1",
+    (await rows("select total_score, deck_snapshot->'sections'->'problem'->>'main' p from public.investor_sessions where id = $1", [practice1]))
+      .every((r) => r.total_score === 60 && r.p === prefill.problem));
+  check("undoing the edit makes the pitch completed again", (await savePitch(deck, { problem: prefill.problem }, 1)).deck_status === "ready");
+  await savePitch(deck, { problem: "Dogs chew things when they're bored at home" }, 6);
+  const v2 = await savePitch(deck, {}, 6, true);
+  check("finishing the revision saves version 2", v2.status === "ok" && v2.version === 2 && v2.achievements.length === 0);
+  check("both versions are kept", (await rows("select version from public.pitch_versions where deck_id = $1 order by version", [deck])).map((r) => r.version).join() === "1,2");
+  const p2 = await startPractice(deck, "penny");
+  check("a new practice uses the latest version", p2.id !== practice1 && p2.resumed === false &&
+    (await rows("select deck_snapshot->>'version' v from public.investor_sessions where id = $1", [p2.id]))[0].v === "2");
+  const note = "I explained this part clearly with my own words";
+  for (const q of penny) await answer(p2.id, q.qid, opt(q, 3), note);
+  const [best] = await rows("select points, total_score, band, tips_keys from public.investor_sessions where id = $1", [p2.id]);
+  check("all strong answers with own words score 20/20 → 100, Ready to grow, no tips", best.points === 20 && best.total_score === 100 && best.band === "ready_to_grow" && best.tips_keys.length === 0);
+  check("repeat pitches and practices don't award duplicate badges", (await badgeCount("first-pitch")) === 1 && (await badgeCount("confident-founder")) === 1);
+  check("both practices are kept as history", (await rows("select count(*)::int n from public.investor_sessions where deck_id = $1 and completed_at is not null", [deck]))[0].n === 2);
+  const unfinished = await startPractice(deck, "sam");
+  globalThis.__unfinished = unfinished.id;
+
+  const otherDeck = await startPitch(draftIdeaB, {});
+  check("a pitch can start from a draft idea too", otherDeck.status === "ok" && otherDeck.id !== deck);
+  check("an unfinished pitch can't be practised", (await startPractice(otherDeck.id, "ivy")).status === "pitch_not_finished");
+  check("exit Child Mode (Phase 6)", (await fn("select public.exit_child_mode('2580') as r")) === "ok");
+  check("a parent outside Child Mode cannot edit pitches", (await savePitch(deck, { problem: "Hijack attempt here" })).status === "not_in_child_mode");
+  check("the parent can read the child's pitch, versions and practice (read-only)",
+    (await rows("select 1 from public.pitch_decks where child_id = $1", [childB])).length === 2 &&
+    (await rows("select 1 from public.pitch_versions where deck_id = $1", [deck])).length === 2 &&
+    (await rows("select 1 from public.investor_responses r join public.investor_sessions s on s.id = r.session_id where s.deck_id = $1", [deck])).length === 10);
+});
+
+// A sibling's pitch in the same family and another family's pitch (seeded directly).
+const siblingDeck = (await rows("insert into public.pitch_decks (child_id, title) values ($1, 'Sibling pitch') returning id", [restored]))[0].id;
+const otherFamilyDeck = (await rows("insert into public.pitch_decks (child_id, title) values ($1, 'Other pitch') returning id", [childA]))[0].id;
+await as("authenticated", B, async () => {
+  await db.query("select public.enter_child_mode($1)", [childB]);
+  check("a sibling's pitch cannot be edited from this child's Child Mode", (await savePitch(siblingDeck, { problem: "Hijack attempt here" })).status === "not_found");
+  check("a sibling's pitch cannot be practised", (await startPractice(siblingDeck, "penny")).status === "not_found");
+  check("another family's pitch cannot be edited", (await savePitch(otherFamilyDeck, { problem: "Hijack attempt here" })).status === "not_found");
+  check("another family's pitch cannot be practised", (await startPractice(otherFamilyDeck, "penny")).status === "not_found");
+  await db.query("select public.exit_child_mode('2580')");
+});
+await as("authenticated", A, async () => {
+  check("another family cannot read B's pitches, versions or practice",
+    (await rows(`select 1 from public.pitch_decks where child_id = $1 union all select 1 from public.pitch_versions
+                 union all select 1 from public.pitch_slides s join public.pitch_decks d on d.id = s.deck_id where d.child_id = $1
+                 union all select 1 from public.investor_sessions union all select 1 from public.investor_responses`, [childB])).length === 0);
+  await db.query("select public.enter_child_mode($1)", [childA]);
+  check("another family cannot answer B's practice from their own Child Mode", (await answer(globalThis.__unfinished, penny[0].qid, opt(penny[0], 3))).status === "not_found");
+  check("another family cannot start practice on B's pitch", (await startPractice(deck, "penny")).status === "not_found");
+  await db.query("select public.exit_child_mode('3691')");
+});
+await expectError("finished pitch versions are immutable even for the server", () =>
+  db.query("update public.pitch_versions set snapshot = '{}' where deck_id = $1", [deck]), /cannot be changed/);
+await expectError("completed practice results are immutable even for the server", () =>
+  db.query("update public.investor_sessions set total_score = 100 where id = $1", [practice1]), /cannot be changed/);
+await expectError("stored answers are immutable", () =>
+  db.query("update public.investor_responses set score = 3 where session_id = $1", [practice1]), /cannot be changed/);
+await expectError("pretend investors can never record an investment decision", () =>
+  db.query("update public.investor_sessions set decision = 'invest' where id = $1", [globalThis.__unfinished]), /no_decisions|check constraint/);
+await db.query(`insert into public.investor_sessions (child_id, deck_id, persona_id, pitch_version_id, deck_snapshot)
+  select $1, $2, (select id from public.investor_personas where key = 'ivy'), (select id from public.pitch_versions where deck_id = $2 and version = 2), '{}'
+  from generate_series(1, 20)`, [childB, deck]);
+await as("authenticated", B, async () => {
+  await db.query("select public.enter_child_mode($1)", [childB]);
+  check("starting practices is rate-limited (20 per hour)", (await startPractice(deck, "captain")).status === "rate_limited");
+  await db.query("select public.exit_child_mode('2580')");
+});
+await as("anon", null, async () => {
+  await expectError("anonymous visitors cannot start pitches", () => db.query("select public.start_pitch(gen_random_uuid())"), /permission denied/);
+  await expectError("anonymous visitors cannot read pitches", () => db.query("select * from public.pitch_versions"), /permission denied/);
+});
 
 console.log("\nDeletion");
 await db.query("delete from public.child_profiles where id = $1", [childA]); // server/service path

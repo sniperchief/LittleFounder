@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Award, Lock, ScrollText } from "lucide-react";
+import { ArrowRight, Award, Lock, Mic, Presentation, ScrollText } from "lucide-react";
 import Link from "next/link";
 import { Suspense } from "react";
 
@@ -9,6 +9,7 @@ import { ProgressBar } from "@/components/dashboard/activity-panels";
 import { FounderAvatar } from "@/components/illustrations/founder-avatar";
 import { requireChildMode } from "@/lib/auth/session";
 import { getAcademyOverview, getPassport } from "@/lib/data/academy";
+import { getPitchProgress } from "@/lib/data/pitch";
 import { cn } from "@/lib/utils";
 
 export const metadata: Metadata = { title: "Founder Passport" };
@@ -25,7 +26,11 @@ export default function PassportPage() {
 
 async function Passport() {
   const { child, supabase } = await requireChildMode();
-  const [academy, passport] = await Promise.all([getAcademyOverview(supabase, child.id), getPassport(supabase, child.id)]);
+  const [academy, passport, pitch] = await Promise.all([
+    getAcademyOverview(supabase, child.id),
+    getPassport(supabase, child.id),
+    getPitchProgress(supabase, child.id),
+  ]);
   const earned = passport.badges.filter((b) => b.earnedAt);
   const stats = [
     { label: "Lessons completed", value: `${academy.lessonsCompleted}/${academy.lessonsTotal}` },
@@ -87,6 +92,37 @@ async function Passport() {
             );
           })}
         </ul>
+      </section>
+
+      <section aria-labelledby="pitching" className="mt-10">
+        <div className="flex flex-wrap items-end justify-between gap-2">
+          <h2 id="pitching" className="text-2xl font-bold text-ink">
+            Pitch Studio &amp; Investor Room
+          </h2>
+          <Link href="/play/pitch" className="inline-flex items-center gap-1 font-bold text-ink underline underline-offset-4">
+            Open Pitch Studio <ArrowRight className="size-4" aria-hidden="true" />
+          </Link>
+        </div>
+        <dl className="mt-4 grid gap-3 sm:grid-cols-3">
+          {[
+            { icon: Presentation, label: "Pitches finished", value: `${pitch.pitchesCompleted}/${pitch.pitchesCreated}`, tone: "bg-sky-soft" },
+            { icon: Mic, label: "Investor Room practices", value: pitch.practicesCompleted, tone: "bg-grape-soft" },
+            { icon: Award, label: "Best practice score", value: pitch.bestScore === null ? "–" : `${pitch.bestScore}/100`, tone: "bg-sun-soft" },
+          ].map(({ icon: Icon, label, value, tone }) => (
+            <div key={label} className={cn("flex items-center gap-3 rounded-2xl border-2 border-ink p-4", tone)}>
+              <Icon className="size-7 shrink-0 text-ink" aria-hidden="true" />
+              <div className="flex flex-col-reverse">
+                <dt className="text-sm font-semibold text-ink/75">{label}</dt>
+                <dd className="font-display text-2xl font-extrabold text-ink">{value}</dd>
+              </div>
+            </div>
+          ))}
+        </dl>
+        {pitch.pitchesCreated === 0 ? (
+          <p className="mt-2 text-ink/75">Build your first pitch to earn the First Pitch badge!</p>
+        ) : pitch.practicesCompleted === 0 && pitch.pitchesCompleted > 0 ? (
+          <p className="mt-2 text-ink/75">Practise in the Investor Room to earn the Confident Founder badge!</p>
+        ) : null}
       </section>
 
       <section aria-labelledby="badges" className="mt-10">

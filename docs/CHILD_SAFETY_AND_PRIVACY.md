@@ -106,6 +106,7 @@ Authentication: Supabase Auth, adults only, verified email, password ≥ 10 char
 Children type in Idea Lab, decks and investor notes. Even though content is private, children may accidentally disclose personal info. MVP safeguards [Recommendation]:
 - Length limits on all fields.
 - Client + server **PII pattern nudges** (phone numbers, emails, street-address patterns, "my school is…") with gentle prompts; not blocking.
+  - *Implemented, Phase 6:* Pitch Studio and Investor Room typed answers go further: text that looks like an email, phone number, link/domain, street address or social handle is **refused** by the server action and the database, after a nudge in the builder (`docs/PITCH_STUDIO.md` §1).
 - Small wordlist profanity filter → friendly nudge.
 - No free text is scored or shown to anyone but the guardian.
 

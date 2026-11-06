@@ -38,7 +38,19 @@ Status: Phase 0 design · **Implemented in Phase 1** as `supabase/migrations/202
 > - Client INSERT/UPDATE/DELETE on `startup_projects` revoked. Writes go through `save_idea(idea_id, fields, step, finish)` (allow-listed fields, atomic, 10-active-idea limit, ownership from `learning_child()`) and `delete_idea(idea_id)`. Guardians keep read access via RLS.
 > - `evaluate_achievements` gains the `ideas_created` rule (Idea Spark badge).
 >
-> Applied to the hosted dev project on 2026-11-06 (0001–0008 + seed). See `docs/CHILD_SAFETY_AND_PRIVACY.md` §9.1.
+> **Phase 5 additions** (`…20261106000900_startup_simulator.sql`, rules in `docs/STARTUP_SIMULATOR.md`):
+> - `simulator_sessions` gains `draft` (resume choices) and `reflection` (predefined key). Scenarios `ecobottle` and `my-idea` are seeded with their options in `demand_params`.
+> - `simulator_outcome()` (pure, deterministic) calculates results; `start_simulation`, `save_simulation_draft`, `run_simulation` (budget-enforced), `set_simulation_reflection` act for the child in Child Mode. Sessions and rounds stay read-only to clients.
+> - Triggers make completed attempts and stored rounds immutable. `evaluate_achievements` gains `simulations_completed` (First Business Run).
+>
+> **Phase 6 additions** (`…20261106001000_pitch_studio.sql`, rules in `docs/PITCH_STUDIO.md`):
+> - `pitch_decks` gains `tagline`, `icon_key`, `builder_step` (resume point) and a preset `theme_key` check; `pitch_slides.content` is `{main, extra}` with length checks. Client INSERT/UPDATE/DELETE on both revoked (guardian read-only policies replace the 0003 write policies).
+> - New `pitch_versions` (immutable snapshots of each finished pitch, v1, v2, …; RLS guardian read).
+> - `investor_sessions` gains `pitch_version_id` (composite FK) and `points`; `decision` must be null (pretend investors never decide); completed sessions are immutable. `investor_responses` gains `bonus` (own words) and `review` (question, answer, feedback snapshot) and is immutable.
+> - Content: `investor_personas.position/style`, `investor_questions.key/position/hint`, seeded from `src/content/investor-room.ts` (scores and feedback hidden by column grants).
+> - Functions acting for the child in Child Mode: `start_pitch`, `save_pitch` (allow-listed fields, privacy check, finish → version), `start_investor_practice`, `answer_investor_question` (deterministic rubric). Internal: `pitch_personal_info`, `own_words_bonus`, `pitch_snapshot`, `pitch_fields_problem`, `pitch_apply_fields`. `evaluate_achievements` gains `pitches_completed` (First Pitch) and `practices_completed` (Confident Founder).
+>
+> Applied to the hosted dev project on 2026-11-06 (0001–0010 + seed). See `docs/CHILD_SAFETY_AND_PRIVACY.md` §9.1.
 
 Target: Supabase Postgres with Row-Level Security (RLS) on every table.
 
@@ -214,20 +226,25 @@ Unique (session_id, round). Server replays the engine from `seed` + decisions to
 ## 8. Pitch Studio & Investor Room 🔴
 
 ### `pitch_decks`
-| id | child_id | project_id FK nullable | title | theme_key | simulator_session_id FK nullable | status (`draft`\|`ready`) | created_at | updated_at |
+| id | child_id | project_id FK nullable | title | tagline | icon_key | theme_key | builder_step | simulator_session_id FK nullable | status (`draft`\|`ready`) | created_at | updated_at |
+`ready` = matches the latest finished version; `draft` with versions = revising. Server-written only (Phase 6).
 
 ### `pitch_slides`
-| id | deck_id FK | section (`problem`\|`solution`\|`customer`\|`business_model`\|`ask`) | layout_key | content jsonb (headline, bullets[], illustration_key, numbers) | position |
+| id | deck_id FK | section (`problem`\|`solution`\|`customer`\|`business_model`\|`ask`) | layout_key | content jsonb (`main` ≤ 280, `extra` ≤ 200) | position |
 Unique (deck_id, section) — exactly five slides in MVP.
+
+### `pitch_versions` (Phase 6)
+| id | deck_id | child_id | version (1, 2, …) | snapshot jsonb (title, tagline, icon_key, theme_key, sections) | created_at |
+Unique (deck_id, version); FK (deck_id, child_id) → pitch_decks. Immutable; guardian read-only.
 
 ### (Deferred) `pitch_uploads` — see Safety doc §7. Not created in MVP.
 
 ### `investor_sessions`
-| id | child_id | deck_id FK | persona_id FK | question_ids uuid[] | total_score int | sub_scores jsonb | band text | decision text | tips_keys text[] | deck_snapshot jsonb | created_at | completed_at |
-`deck_snapshot` freezes what was evaluated so later edits don't change historical feedback.
+| id | child_id | deck_id FK | persona_id FK | pitch_version_id FK | question_ids uuid[] | points 0–20 | total_score 0–100 | sub_scores jsonb | band text | decision (always null) | tips_keys text[] | deck_snapshot jsonb | created_at | completed_at |
+`deck_snapshot` freezes what was evaluated so later edits don't change historical feedback. Immutable once completed.
 
 ### `investor_responses`
-| id | session_id FK | question_id FK | option_id FK | note text (≤200, optional, unscored) | score int | created_at |
+| id | session_id FK | question_id FK | option_id FK | note text (≤200, optional; earns the own-words bonus) | score 0–3 | bonus 0–1 | review jsonb | created_at |
 
 ---
 

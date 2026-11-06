@@ -1,6 +1,6 @@
 import type { AchievementContent, CertificateContent } from "./types";
 
-// Founder Passport badges (Academy + Idea Lab). Every rule is evaluated in the database from stored,
+// Founder Passport badges (Academy, Idea Lab, Simulator, Pitch Studio). Every rule is evaluated in the database from stored,
 // server-verified activity (public.evaluate_achievements) — never from client claims.
 // Module badges are generated from each module's `badge` (see index.ts).
 export const extraAchievements: AchievementContent[] = [
@@ -35,6 +35,30 @@ export const extraAchievements: AchievementContent[] = [
     icon: "lightbulb",
     tier: 1,
     rule: { type: "ideas_created", count: 1 },
+  },
+  {
+    key: "first-business-run",
+    title: "First Business Run",
+    description: "Completed your first Startup Simulator challenge.",
+    icon: "trending-up",
+    tier: 1,
+    rule: { type: "simulations_completed", count: 1 },
+  },
+  {
+    key: "first-pitch",
+    title: "First Pitch",
+    description: "Finished your first pitch in Pitch Studio.",
+    icon: "presentation",
+    tier: 1,
+    rule: { type: "pitches_completed", count: 1 },
+  },
+  {
+    key: "confident-founder",
+    title: "Confident Founder",
+    description: "Completed your first Investor Room practice.",
+    icon: "mic",
+    tier: 2,
+    rule: { type: "practices_completed", count: 1 },
   },
   {
     key: "halfway-hero",

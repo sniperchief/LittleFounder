@@ -2,6 +2,7 @@ import "server-only";
 
 import { cache } from "react";
 
+import { getPitchProgress, type PitchProgress } from "@/lib/data/pitch";
 import { createClient } from "@/lib/supabase/server";
 
 // Read helpers for the Parent Dashboard. All queries run as the signed-in parent,
@@ -73,7 +74,16 @@ export type ChildActivity = {
   ideas: { id: string; name: string; status: string; icon_key: string; created_at: string; updated_at: string }[];
   simulationsCompleted: number;
   simulationsStarted: number;
-  pitchDecks: { id: string; title: string; status: string; updated_at: string }[];
+  recentSimulations: {
+    id: string;
+    name: string;
+    status: string;
+    profit: number | null;
+    unitsSold: number | null;
+    revenue: number | null;
+    date: string;
+  }[];
+  pitch: PitchProgress;
   achievements: { key: string; title: string; earned_at: string }[];
   certificates: { title: string; issued_at: string }[];
   lastActivityAt: string | null;
@@ -83,7 +93,7 @@ export type ChildActivity = {
 export async function getChildActivity(childId: string): Promise<ChildActivity> {
   const supabase = await createClient();
 
-  const [modules, lessons, progress, quizzes, attempts, ideas, sims, decks, achievements, certificates] = await Promise.all([
+  const [modules, lessons, progress, quizzes, attempts, ideas, sims, pitch, achievements, certificates] = await Promise.all([
     supabase.from("modules").select("id, key, title, position").order("position"),
     supabase.from("lessons").select("id, module_id"),
     supabase.from("lesson_progress").select("lesson_id, status, completed_at").eq("child_id", childId),
@@ -95,12 +105,13 @@ export async function getChildActivity(childId: string): Promise<ChildActivity> 
       .eq("child_id", childId)
       .neq("status", "archived")
       .order("updated_at", { ascending: false }),
-    supabase.from("simulator_sessions").select("status").eq("child_id", childId),
     supabase
-      .from("pitch_decks")
-      .select("id, title, status, updated_at")
+      .from("simulator_sessions")
+      .select("id, status, final_summary, created_at, completed_at, simulator_scenarios(title), startup_projects(name)")
       .eq("child_id", childId)
-      .order("updated_at", { ascending: false }),
+      .in("status", ["active", "completed"])
+      .order("created_at", { ascending: false }),
+    getPitchProgress(supabase, childId),
     supabase
       .from("child_achievements")
       .select("earned_at, achievements(key, title)")
@@ -113,7 +124,7 @@ export async function getChildActivity(childId: string): Promise<ChildActivity> 
       .eq("status", "active"),
   ]);
 
-  const failed = [modules, lessons, progress, quizzes, attempts, ideas, sims, decks, achievements, certificates].find(
+  const failed = [modules, lessons, progress, quizzes, attempts, ideas, sims, achievements, certificates].find(
     (r) => r.error,
   );
   if (failed) throw new Error("Could not load activity.");
@@ -163,7 +174,21 @@ export async function getChildActivity(childId: string): Promise<ChildActivity> 
     ideas: ideas.data ?? [],
     simulationsCompleted: (sims.data ?? []).filter((s) => s.status === "completed").length,
     simulationsStarted: (sims.data ?? []).length,
-    pitchDecks: decks.data ?? [],
+    recentSimulations: (sims.data ?? []).slice(0, 5).map((s) => {
+      const scenario = (Array.isArray(s.simulator_scenarios) ? s.simulator_scenarios[0] : s.simulator_scenarios) as { title: string } | null;
+      const project = (Array.isArray(s.startup_projects) ? s.startup_projects[0] : s.startup_projects) as { name: string } | null;
+      const summary = s.final_summary as { profit: number; units_sold: number; revenue: number } | null;
+      return {
+        id: s.id as string,
+        name: project ? `${project.name} (practice numbers)` : (scenario?.title ?? "Simulation"),
+        status: s.status as string,
+        profit: summary?.profit ?? null,
+        unitsSold: summary?.units_sold ?? null,
+        revenue: summary?.revenue ?? null,
+        date: (s.completed_at ?? s.created_at) as string,
+      };
+    }),
+    pitch,
     achievements: (achievements.data ?? []).flatMap((a) => {
       const ach = Array.isArray(a.achievements) ? a.achievements[0] : a.achievements;
       return ach ? [{ key: ach.key as string, title: ach.title as string, earned_at: a.earned_at as string }] : [];

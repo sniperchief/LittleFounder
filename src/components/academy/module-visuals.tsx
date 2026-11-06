@@ -7,9 +7,11 @@ import {
   GraduationCap,
   Handshake,
   Lightbulb,
+  Mic,
   Presentation,
   Sparkles,
   Star,
+  TrendingUp,
   Users,
   type LucideIcon,
 } from "lucide-react";
@@ -32,6 +34,8 @@ const icons: Record<string, LucideIcon> = {
   star: Star,
   flag: Flag,
   "graduation-cap": GraduationCap,
+  "trending-up": TrendingUp,
+  mic: Mic,
 };
 
 export const toneSoft: Record<Tone, string> = {

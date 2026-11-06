@@ -1,5 +1,6 @@
 // End-to-end browser tests: parent accounts, onboarding, child profiles, Child Mode,
-// Founder Academy, Founder Passport and the Parent Dashboard — against the running app
+// Founder Academy, Founder Passport, Idea Lab, Startup Simulator, Pitch Studio & Investor Room
+// and the Parent Dashboard — against the running app
 // and the hosted Supabase project in .env.local.
 //
 // Fictional accounts only (lf-e2e-<run>-*@example.com); everything is deleted at the end.
@@ -388,7 +389,7 @@ try {
   check("completed quiz results are shown again later", (await has(/100%/)) && (await has(/Your answers/)));
 
   await go("/play/passport");
-  check("Passport shows the badges actually earned", (await has(/3 of 12 badges collected/)) && (await has(/Earned/)));
+  check("Passport shows the badges actually earned", (await has(/3 of 15 badges collected/)) && (await has(/Earned/)));
   check("Passport shows lessons and challenges", (await has(/3\/18/)) && (await has(/Challenges solved/)));
   check("milestone certificate is described as a learning milestone", (await has(/Complete all six modules/)));
 
@@ -493,7 +494,7 @@ try {
   check("the deleted idea is gone", (await has(/Idea deleted/)) && (await admin.from("startup_projects").select("id").eq("id", draftId)).data?.length === 0);
   check("the other idea is untouched", await has(/Puzzle Pup Pro/));
   await go("/play/passport");
-  check("Academy progress and badges are intact alongside Idea Spark", (await has(/4 of 12 badges collected/)) && (await has(/3\/18/)));
+  check("Academy progress and badges are intact alongside Idea Spark", (await has(/4 of 15 badges collected/)) && (await has(/3\/18/)));
 
   await go("/play/exit");
   await page.getByLabel("Parent PIN").fill("3691");
@@ -504,6 +505,186 @@ try {
   check("parents can open a read-only view of the idea", (await has(/Read-only view/)) && (await has(/A puzzle feeder made from recycled boxes/)));
   await go(`/parent/children/${ben.id}`);
   check("the sibling has no ideas", await has(/No ideas saved yet/));
+
+  console.log("\nStartup Simulator (Phase 5)");
+  await go("/profiles");
+  await page.getByRole("button", { name: /Demo Adaeze/ }).first().click();
+  await page.waitForURL("**/play", { timeout: 15000 }).catch(() => {});
+  await page.getByRole("link", { name: /Startup Simulator/ }).first().click();
+  await page.waitForURL("**/play/simulator", { timeout: 15000 }).catch(() => {});
+  check("the simulator explains itself and labels Founder Bucks as pretend", (await has(/Run a pretend business/)) && (await has(/Pretend money/)));
+  check("the child's created idea can be used", await has(/Puzzle Pup Pro/));
+  await page.getByRole("button", { name: /Play EcoBottle/ }).click();
+  await page.waitForURL(/\/play\/simulator\/[0-9a-f-]{36}$/, { timeout: 15000 }).catch(() => {});
+  const simId = path(page).match(/[0-9a-f-]{36}/)?.[0];
+  check("an EcoBottle attempt starts at step 1", (await has(/Step 1 of 5/)) && (await has(/1,000 FB/)));
+  await click(/Let.s go/);
+  await page.getByRole("radio", { name: /^10 FB/ }).click();
+  await click(/^Next/);
+  await page.getByRole("radio", { name: /^100 bottles/ }).click();
+  check("production cost and budget are shown", (await has(/Costs 100 × 4 FB = 400 FB/)) && (await has(/left 600 FB/)));
+  await click(/^Next/);
+  await page.goto(BASE + "/play/simulator", { waitUntil: "load" });
+  check("the unfinished attempt is listed as in progress", await has(/In progress/));
+  await page.getByRole("button", { name: /Continue EcoBottle/ }).click();
+  await page.waitForURL(`**/play/simulator/${simId}`, { timeout: 15000 }).catch(() => {});
+  check("resuming returns to the saved step", await has(/Step 4 of 5/));
+  await page.getByRole("radio", { name: /Posters around town/ }).click();
+  await click(/^Next/);
+  check("the plan summary shows total spending and budget left", (await has(/Total spending/)) && (await has(/550 FB/)));
+  await click(/Run .* season/);
+  await page.waitForURL(/\/play\/simulator\/[0-9a-f-]{36}\?done=1/, { timeout: 15000 }).catch(() => {});
+  check("results show profit, revenue, costs and cash remaining", (await has(/550 FB/)) && (await has(/1,000 FB/)) && (await has(/450 FB/)) && (await has(/1,550 FB/)));
+  check("results explain that cash remaining isn't profit", await has(/Cash remaining isn.t profit/));
+  check("the first run awards First Business Run", await has(/First Business Run/));
+  await click(/I.d change my price/);
+  await click(/Save my answer/);
+  check("the reflection answer is saved", await has(/Your answer is saved/));
+  await page.reload({ waitUntil: "networkidle" });
+  check("the reflection persists with the attempt", await has(/Reflection: I.d change my price/));
+  await click(/Try another attempt/);
+  await page.waitForURL(/\/play\/simulator\/[0-9a-f-]{36}$/, { timeout: 15000 }).catch(() => {});
+  const sim2Id = path(page).match(/[0-9a-f-]{36}/)?.[0];
+  check("another attempt starts fresh", sim2Id && sim2Id !== simId && (await has(/Step 1 of 5/)));
+  await click(/Let.s go/);
+  await page.getByRole("radio", { name: /^15 FB/ }).click();
+  await click(/^Next/);
+  await page.getByRole("radio", { name: /^250 bottles/ }).click();
+  await click(/^Next/);
+  check("marketing that would break the budget is disabled with a reason", await has(/Too expensive: your plan would cost 1,050 FB/));
+  await page.getByRole("radio", { name: /No marketing/ }).click();
+  await click(/^Next/);
+  await click(/Run .* season/);
+  await page.waitForURL(/\?done=1/, { timeout: 15000 }).catch(() => {});
+  check("a loss is shown as a loss", (await has(/Loss/)) && (await has(/−400 FB/)));
+  check("attempts can be compared", (await has(/Compare your attempts/)) && (await has(/#2 \(this one\)/)));
+  const passportBadges = (await admin.from("child_achievements").select("achievements!inner(key)").eq("child_id", ada.id).eq("achievements.key", "first-business-run")).data;
+  check("First Business Run is not awarded twice", passportBadges?.length === 1);
+
+  await go("/play/exit");
+  await page.getByLabel("Parent PIN").fill("3691");
+  await submit("Parent area");
+  await go(`/parent/children/${ada.id}`);
+  check("Parent Dashboard shows completed simulations with results", (await has(/Simulations/)) && (await has(/EcoBottle/)) && (await has(/Profit 550 FB/)) && (await has(/Loss -400 FB/)));
+  await page.getByRole("link", { name: /EcoBottle/ }).last().click();
+  check("parents can open a read-only result", (await has(/Read-only view/)) && (await has(/Cash remaining/)));
+
+  console.log("\nPitch Studio & Investor Room (Phase 6)");
+  await go("/profiles");
+  await page.getByRole("button", { name: /Demo Adaeze/ }).first().click();
+  await page.waitForURL("**/play", { timeout: 15000 }).catch(() => {});
+  await page.getByRole("link", { name: /Pitch Studio/ }).first().click();
+  await page.waitForURL("**/play/pitch", { timeout: 15000 }).catch(() => {});
+  check("Pitch Studio explains pitching and asks for no personal details", (await has(/A pitch is a short talk/)) && (await has(/Never add your name/)));
+  check("the child's Idea Lab idea is offered and the pretend investors are introduced", (await has(/Puzzle Pup Pro/)) && (await has(/Penny the Planner/)) && (await has(/no real money/)));
+  await page.getByRole("button", { name: /Start pitch/ }).first().click();
+  await page.waitForURL(/\/play\/pitch\/[0-9a-f-]{36}\/edit\?step=1&new=1/, { timeout: 15000 }).catch(() => {});
+  const deckId = path(page).match(/[0-9a-f-]{36}/)?.[0];
+  const problemBox = () => page.getByLabel(/What problem are you trying to solve/);
+  check("a pitch starts from the idea with prefilled answers", (await has(/We filled in some parts/)) && (await problemBox().inputValue()) === "Pets get bored when everyone is out");
+  check("extra details are prefilled from the idea", (await page.getByLabel(/Who has it, and how often/).inputValue()).includes("Families with dogs"));
+  check("each section explains the idea with an example", (await has(/Every good pitch starts with a problem/)) && (await has(/Example:/)));
+  await problemBox().fill("Text me on 0123 456 7890");
+  check("contact details get a privacy nudge", await has(/looks like a phone number/));
+  await click(/Save & continue/);
+  check("contact details are not saved", (await has(/Please remove personal details/)) && (await has(/Step 1 of 6/)));
+  await problemBox().fill("Pets get bored when everyone is out at school and work");
+  await click(/Save & continue/);
+  check("step 1 saves and moves to step 2", await has(/Step 2 of 6/));
+  check("the solution is prefilled from the idea", (await page.getByLabel(/How does your idea solve the problem/).inputValue()) === "A puzzle feeder made from recycled boxes");
+  const deckRow = (await admin.from("pitch_decks").select("child_id, project_id, builder_step, status").eq("id", deckId).single()).data;
+  check("the draft is saved for this child and idea", deckRow?.child_id === ada.id && deckRow.project_id === ideaId && deckRow.builder_step === 2 && deckRow.status === "draft");
+  await go("/play/pitch");
+  check("the draft is listed so it can be resumed", (await has(/Draft/)) && (await has(/Continue at step 2/)));
+  await page.getByRole("link", { name: /Continue at step 2/ }).click();
+  check("resuming opens the saved step", await has(/Step 2 of 6/));
+  await page.getByRole("navigation", { name: "Pitch steps" }).getByRole("button").nth(2).click();
+  await has(/Step 3 of 6/);
+  await page.getByLabel(/Who would use or buy it/).fill("");
+  await page.getByRole("navigation", { name: "Pitch steps" }).getByRole("button").nth(5).click();
+  check("the final step shows the title slide with the idea's name", (await has(/Your title slide/)) && (await page.getByLabel(/Business name/).inputValue()) === "Puzzle Pup Pro");
+  check("the checklist marks required and optional parts", (await has(/Required, still to do/)) && (await has(/Optional/)));
+  await click(/Finish my pitch/);
+  check("a pitch with a required section missing cannot be finished", await has(/still need a little more/));
+  await click(/Go to Your Customers/);
+  check("the reminder links back to the missing section", await has(/Step 3 of 6/));
+  await page.getByLabel(/Who would use or buy it/).fill("Dog owners with busy days");
+  await page.getByRole("navigation", { name: "Pitch steps" }).getByRole("button").nth(5).click();
+  await has(/Your title slide/);
+  await page.getByRole("radio", { name: "Ocean" }).click();
+  await click(/Finish my pitch/);
+  await page.waitForURL(/\/play\/pitch\/[0-9a-f-]{36}\?finished=1/, { timeout: 15000 }).catch(() => {});
+  check("finishing celebrates and awards First Pitch", (await has(/Your pitch is finished/)) && (await has(/First Pitch/)) && (await has(/Completed · v1/)));
+  check("the deck has a title slide plus one slide per section", (await page.locator('[aria-label="Pitch deck slides"] > li').count()) === 6 &&
+    (await has(/Dog owners with busy days/)) && (await has(/Puzzle Pup Pro/)));
+  await page.getByRole("link", { name: /Present my pitch/ }).click();
+  await page.waitForURL(/\/present$/, { timeout: 15000 }).catch(() => {});
+  check("present mode opens on the title slide", (await has(/Slide 1 of 6/)) && (await has(/Made in Pitch Studio/)));
+  await page.keyboard.press("ArrowRight");
+  check("arrow keys move to the next slide", (await has(/Slide 2 of 6/)) && (await has(/at school and work/)));
+  for (let i = 0; i < 5; i++) await page.keyboard.press("ArrowRight");
+  check("the last slide is the opportunity and Next stops there", (await has(/Slide 6 of 6/)) && (await page.getByRole("button", { name: /^Next/ }).isDisabled()));
+
+  await go(`/play/pitch/${deckId}/investor`);
+  check("the Investor Room shows four pretend investors with clear labels", (await has(/Captain Customer/)) && (await has(/Steady Sam/)) && (await has(/made-up characters for practice/)));
+  await page.getByRole("button", { name: /Practise with Penny/ }).click();
+  await page.waitForURL(/\/investor\/[0-9a-f-]{36}$/, { timeout: 15000 }).catch(() => {});
+  const practiceId = path(page).match(/investor\/([0-9a-f-]{36})/)?.[1];
+  check("Penny introduces herself as a pretend investor", (await has(/Meet Penny the Planner/)) && (await has(/Pretend investor/)));
+  await click(/I.m ready/);
+  const pennyQs = (await admin.from("investor_questions").select("position, investor_personas!inner(key), investor_answer_options(label, score)")
+    .eq("investor_personas.key", "penny").order("position")).data ?? [];
+  const labelFor = (i, score) => pennyQs[i].investor_answer_options.find((o) => o.score === score).label;
+  const plan = [[3, "I asked eight dog owners and six said yes"], [1, ""], [0, ""], [3, "my price is more than the cost to make"], [3, ""]];
+  for (const [i, [score, note]] of plan.entries()) {
+    await has(new RegExp(`Question ${i + 1} of 5`));
+    await page.getByRole("radio", { name: labelFor(i, score) }).click();
+    if (i === 0) {
+      await page.getByLabel(/Now say it in your own words/).fill("Call me on 07700 900123");
+      check("typed answers get a privacy nudge and can't be sent", (await has(/looks like a phone number/)) && (await page.getByRole("button", { name: /Give my answer/ }).isDisabled()));
+    }
+    await page.getByLabel(/Now say it in your own words/).fill(note);
+    if (i === 0) check("a long enough answer shows the bonus point", await has(/Bonus point ready/));
+    await click(/Give my answer/);
+    if (i === 0) check("a strong answer gets predefined feedback and the bonus", (await has(/Strong answer/)) && (await has(/\+1 own words/)));
+    if (i === 1) check("a partial answer explains how to improve", (await has(/Good start/)) && (await has(/A stronger answer/)));
+    await click(i === 4 ? /See my practice feedback/ : /Next question/);
+  }
+  await page.waitForURL(/\/investor\/[0-9a-f-]{36}\?done=1/, { timeout: 15000 }).catch(() => {});
+  check("the practice result shows the documented score and band", (await has(/Practice complete/)) && (await has(/\b60\b/)) && (await has(/Promising/)) && (await has(/12 of 20 rubric points/)));
+  check("the rubric breakdown, strengths and suggestions are shown", (await has(/Rubric breakdown/)) && (await has(/Problem clarity/)) && (await has(/What you explained well/)) && (await has(/Ideas to improve/)));
+  check("results never imply a real investor or funding", (await has(/No real investor has seen your pitch/)) && !(await text()).match(/I'd like to invest|invest in you|we will fund/i));
+  check("the first practice awards Confident Founder", await has(/Confident Founder/));
+
+  await go(`/play/pitch/${deckId}/edit?step=1`);
+  await problemBox().fill("Dogs chew things when they are bored at home all day");
+  await page.getByRole("navigation", { name: "Pitch steps" }).getByRole("button").nth(5).click();
+  await has(/Your title slide/);
+  check("a finished pitch offers to save a new version", await has(/Save as a new version/));
+  await click(/Save as a new version/);
+  await page.waitForURL(/\?finished=2/, { timeout: 15000 }).catch(() => {});
+  check("revising saves version 2 and keeps the earlier practice", (await has(/Version 2 is saved/)) && (await has(/60\/100/)) && (await has(/Version 1/)));
+  const versions = (await admin.from("pitch_versions").select("version, snapshot").eq("deck_id", deckId).order("version")).data ?? [];
+  const oldPractice = (await admin.from("investor_sessions").select("total_score, deck_snapshot").eq("id", practiceId).single()).data;
+  check("version 1 and its evaluation are preserved unchanged", versions.length === 2 && versions[0].snapshot.sections.problem.main.includes("at school and work") &&
+    oldPractice?.total_score === 60 && oldPractice.deck_snapshot.version === 1);
+  const badgeRows = async (key) => (await admin.from("child_achievements").select("achievements!inner(key)").eq("child_id", ada.id).eq("achievements.key", key)).data?.length;
+  check("First Pitch and Confident Founder are awarded once", (await badgeRows("first-pitch")) === 1 && (await badgeRows("confident-founder")) === 1);
+  await go("/play/passport");
+  check("Founder Passport shows pitch and Investor Room progress", (await has(/Pitches finished/)) && (await has(/1\/1/)) && (await has(/Investor Room practices/)) && (await has(/60\/100/)));
+
+  await go("/play/exit");
+  await page.getByLabel("Parent PIN").fill("3691");
+  await submit("Parent area");
+  await go(`/parent/children/${ada.id}`);
+  check("Parent Dashboard counts pitches and practices with recent activity",
+    (await has(/Pitches & Investor Room/)) && (await has(/Pitches created/)) && (await has(/Recent pitch activity/)) && (await has(/Completed \(v2\)/)));
+  await page.getByRole("link", { name: /Puzzle Pup Pro/ }).last().click();
+  await page.waitForURL(/\/pitches\/[0-9a-f-]{36}/, { timeout: 15000 }).catch(() => {});
+  check("parents can open a read-only pitch with practice results", (await has(/Read-only view/)) && (await has(/Investor Room practice/)) && (await has(/60\/100/)) && (await has(/Rubric breakdown/)));
+  check("the read-only view has no editing controls", (await page.getByRole("button", { name: /Save|Finish|Give my answer/ }).count()) === 0);
+  await go(`/parent/children/${ben.id}`);
+  check("the sibling has no pitches", await has(/No pitches created yet/));
 
   console.log("\nFamily isolation in the browser");
   const { data: ub } = await admin.auth.admin.createUser({ email: emailB, password: pwB, email_confirm: true });
@@ -529,12 +710,16 @@ try {
   check("parent B sees not-found when editing parent A's child", (await has(/wandered off/, pB)) && !/Adaeze/.test(await r3.text()), String(r3.status()));
   const r4 = await pB.goto(BASE + `/parent/children/${ada.id}/ideas/${ideaId}`, { waitUntil: "networkidle" });
   check("parent B cannot open parent A's child's idea", (await has(/wandered off/, pB)) && !/Puzzle Pup/.test(await r4.text()), String(r4.status()));
+  const r5 = await pB.goto(BASE + `/parent/children/${ada.id}/simulations/${simId}`, { waitUntil: "networkidle" });
+  check("parent B cannot open parent A's child's simulation", (await has(/wandered off/, pB)) && !/1,550 FB/.test(await r5.text()), String(r5.status()));
+  const r6 = await pB.goto(BASE + `/parent/children/${ada.id}/pitches/${deckId}`, { waitUntil: "networkidle" });
+  check("parent B cannot open parent A's child's pitch", (await has(/wandered off/, pB)) && !/Puzzle Pup|at home all day/.test(await r6.text()), String(r6.status()));
   await ctxB.close();
 
   console.log("\nResponsive (signed-in pages)");
   for (const w of [320, 390, 768]) {
     await page.setViewportSize({ width: w, height: 800 });
-    for (const p of ["/parent", `/parent/children/${ada.id}`, "/parent/children/new", "/parent/settings", "/profiles"]) {
+    for (const p of ["/parent", `/parent/children/${ada.id}`, `/parent/children/${ada.id}/pitches/${deckId}`, "/parent/children/new", "/parent/settings", "/profiles"]) {
       await go(p);
       check(`${p.replace(/[0-9a-f-]{36}/, ":id")} @${w}px has no horizontal overflow`, !(await overflow()));
     }
@@ -544,9 +729,11 @@ try {
   await page.waitForURL("**/play", { timeout: 15000 }).catch(() => {});
   for (const w of [320, 390]) {
     await page.setViewportSize({ width: w, height: 800 });
-    for (const p of ["/play", "/play/exit", "/play/academy", `/play/academy/${m1}`, lessonUrl(m1Lessons[1]), `/play/academy/${m1}/quiz`, "/play/passport", "/play/ideas", `/play/ideas/${ideaId}`, `/play/ideas/${ideaId}/edit?step=1`]) {
+    for (const p of ["/play", "/play/exit", "/play/academy", `/play/academy/${m1}`, lessonUrl(m1Lessons[1]), `/play/academy/${m1}/quiz`, "/play/passport", "/play/ideas", `/play/ideas/${ideaId}`, `/play/ideas/${ideaId}/edit?step=1`, "/play/simulator", `/play/simulator/${simId}`,
+      "/play/pitch", `/play/pitch/${deckId}`, `/play/pitch/${deckId}/edit?step=1`, `/play/pitch/${deckId}/edit?step=6`, `/play/pitch/${deckId}/present`,
+      `/play/pitch/${deckId}/investor`, `/play/pitch/${deckId}/investor/${practiceId}`]) {
       await go(p);
-      check(`${p} @${w}px has no horizontal overflow`, !(await overflow()));
+      check(`${p.replace(/[0-9a-f-]{36}/g, ":id")} @${w}px has no horizontal overflow`, !(await overflow()));
     }
   }
   await page.setViewportSize({ width: 390, height: 800 });

@@ -3,7 +3,7 @@
 Entrepreneurship learning for children aged 10–13, with parents in charge.
 Product and architecture decisions live in [`docs/`](docs/) — start with `docs/PHASE_0_REPORT.md`.
 
-**Status:** Phase 4 (Idea Lab) on top of Phase 3 (Founder Academy and Founder Passport) and Phase 2 (parent accounts, consent, child profiles, Child Mode, Parent Dashboard).
+**Status:** Phase 6 (Pitch Studio & Investor Room — rules in `docs/PITCH_STUDIO.md`), Phase 5 (Startup Simulator — rules in `docs/STARTUP_SIMULATOR.md`) and Phase 4 (Idea Lab) on top of Phase 3 (Founder Academy and Founder Passport) and Phase 2 (parent accounts, consent, child profiles, Child Mode, Parent Dashboard).
 
 ## Stack
 
@@ -23,10 +23,10 @@ npm run dev          # http://localhost:3000
 | `npm run build` / `npm start` | Production build / serve |
 | `npm run lint` | ESLint |
 | `npm run typecheck` | Generate route types + `tsc --noEmit` |
-| `npm run db:check` | Checks `seed.sql` matches the curriculum, then applies all migrations + seed to an in-memory Postgres (PGlite) with a stub of Supabase's roles and runs 136 security checks. A simulation, not real Supabase. |
-| `npm run content:seed` | Regenerates `supabase/seed.sql` from `src/content/academy` (run after editing lessons or quizzes). |
+| `npm run db:check` | Checks `seed.sql` matches the curriculum, then applies all migrations + seed to an in-memory Postgres (PGlite) with a stub of Supabase's roles and runs 285 security, calculation and scoring checks. A simulation, not real Supabase. |
+| `npm run content:seed` | Regenerates `supabase/seed.sql` from `src/content/academy`, `src/content/simulator.ts` and `src/content/investor-room.ts` (run after editing lessons, quizzes or investor questions). |
 | `npm run db:push` | Applies `supabase/migrations` to the hosted project in `SUPABASE_DB_URL`, then applies the (idempotent) curriculum seed. |
-| `npm run db:check:remote` | 77 real end-to-end checks against the hosted project (Auth, RLS, purge, Academy scoring, Idea Lab) using throwaway fictional accounts, deleted afterwards. |
+| `npm run db:check:remote` | 119 real end-to-end checks against the hosted project (Auth, RLS, purge, Academy scoring, Idea Lab, Simulator, Pitch Studio & Investor Room) using throwaway fictional accounts, deleted afterwards. |
 | `npm run test:e2e` | Browser end-to-end test (needs `npm run build && npm start` running and an installed Edge/Chrome). Creates and deletes fictional accounts. |
 
 ## Supabase setup
@@ -50,7 +50,7 @@ Never commit `.env.local` or expose the secret key to the browser.
 ```
 docs/                     Phase 0 specs (product, architecture, schema, safety, roadmap)
 scripts/check-db.mjs      Migration + RLS checks (PGlite)
-supabase/migrations/      SQL migrations (0001 foundation … 0005 parent accounts & Child Mode, 0006 reliable purge)
+supabase/migrations/      SQL migrations (0001 foundation … 0008 Idea Lab, 0009 Startup Simulator, 0010 Pitch Studio & Investor Room)
 supabase/seed.sql         Curriculum seed (no personal data)
 src/app/(marketing)/      Public pages: /, /get-started, /privacy
 src/app/(auth)/           Sign in/up, password reset + auth server actions
@@ -61,12 +61,12 @@ src/proxy.ts              Session refresh + optimistic sign-in redirect
 src/components/ui/        Design-system primitives (button, card, badge, form fields)
 src/components/layout/    Header, footer, container/section, status panel
 src/components/marketing/ Landing page sections
-src/content/              Typed product content (modules, nav, currency name)
+src/content/              Typed product content (curriculum, Idea Lab, Simulator, Pitch Studio, investor bank)
 src/lib/supabase/         Supabase browser/server clients
 ```
 
 ## Ground rules
 
 - No real child data until the professional privacy/legal review is complete. Demo profiles are fictional.
-- No external AI APIs, no real money, no child wallets. The Simulator uses pretend "Founder Bucks".
+- No external AI APIs, no real money, no child wallets. The Simulator uses pretend "Founder Bucks"; Investor Room characters are pretend investors giving rule-based practice feedback.
 - Every new table gets RLS and a check in `scripts/check-db.mjs`.

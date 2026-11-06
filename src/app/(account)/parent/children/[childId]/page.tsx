@@ -104,8 +104,8 @@ async function Content({ params, searchParams }: PageProps<"/parent/children/[ch
         <QuizPanel activity={activity} />
         <AchievementsPanel activity={activity} />
         <IdeasPanel activity={activity} childId={child.id} />
-        <SimulationsPanel activity={activity} />
-        <PitchesPanel activity={activity} />
+        <SimulationsPanel activity={activity} childId={child.id} />
+        <PitchesPanel activity={activity} childId={child.id} />
       </div>
     </div>
   );

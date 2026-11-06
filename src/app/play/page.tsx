@@ -17,8 +17,8 @@ type Zone = { icon: LucideIcon; title: string; body: string; tone: string; href?
 const zones: Zone[] = [
   { icon: BookOpen, title: "Founder Academy", body: "Short lessons and quizzes about how businesses start.", tone: "bg-sun-soft", href: "/play/academy" },
   { icon: FlaskConical, title: "Idea Lab", body: "Turn a problem you've spotted into a real idea.", tone: "bg-coral-soft", href: "/play/ideas" },
-  { icon: TrendingUp, title: "Startup Simulator", body: "Run a pretend business with Founder Bucks.", tone: "bg-mint-soft" },
-  { icon: Presentation, title: "Pitch Studio", body: "Build a pitch and meet the investor panel.", tone: "bg-sky-soft" },
+  { icon: TrendingUp, title: "Startup Simulator", body: "Run a pretend business with Founder Bucks.", tone: "bg-mint-soft", href: "/play/simulator" },
+  { icon: Presentation, title: "Pitch Studio", body: "Build a pitch and practise with pretend investors.", tone: "bg-sky-soft", href: "/play/pitch" },
 ];
 
 export default function ChildHomePage() {

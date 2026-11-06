@@ -96,7 +96,10 @@ export type AchievementContent = {
     | { type: "module_completed"; module: string }
     | { type: "modules_completed"; count: number }
     | { type: "perfect_quiz" }
-    | { type: "ideas_created"; count: number };
+    | { type: "ideas_created"; count: number }
+    | { type: "simulations_completed"; count: number }
+    | { type: "pitches_completed"; count: number }
+    | { type: "practices_completed"; count: number };
 };
 
 export type CertificateContent = {

@@ -92,7 +92,7 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/parent">[
                 <dl className="mt-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
                   <StatTile label="Lessons" value={a.lessonsCompleted} tone="bg-sun-soft" />
                   <StatTile label="Ideas" value={a.ideas.length} tone="bg-coral-soft" />
-                  <StatTile label="Pitches" value={a.pitchDecks.length} tone="bg-sky-soft" />
+                  <StatTile label="Pitches" value={a.pitch.pitchesCreated} tone="bg-sky-soft" />
                   <StatTile label="Badges" value={a.achievements.length} tone="bg-rose-soft" />
                 </dl>
                 <div className="mt-6 flex flex-col gap-3 sm:flex-row">

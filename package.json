@@ -8,7 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
-    "db:check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-seed.mjs --check && node scripts/check-db.mjs",
+    "db:check": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-seed.mjs --check && node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/check-db.mjs",
     "db:check:remote": "node --env-file=.env.local scripts/check-supabase.mjs",
     "db:push": "node --env-file=.env.local scripts/db-push.mjs",
     "content:seed": "node --disable-warning=MODULE_TYPELESS_PACKAGE_JSON scripts/generate-seed.mjs",
