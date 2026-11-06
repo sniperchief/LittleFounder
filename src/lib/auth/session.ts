@@ -18,6 +18,8 @@ export type AdultContext = {
   hasPin: boolean;
   /** Set while Child Mode is active. Stored in the database, not a cookie. */
   childModeChildId: string | null;
+  /** One-click demo account (recorded server-side in demo_accounts; deleted after 48 hours). */
+  isDemo: boolean;
 };
 
 export const getAdultContext = cache(async (): Promise<AdultContext | null> => {
@@ -29,10 +31,11 @@ export const getAdultContext = cache(async (): Promise<AdultContext | null> => {
   const user = userData.user;
   if (!user) return null;
 
-  const [account, consent, pin] = await Promise.all([
+  const [account, consent, pin, demo] = await Promise.all([
     supabase.from("adult_accounts").select("display_name, child_mode_child_id").eq("id", user.id).maybeSingle(),
     supabase.rpc("has_core_consent", { adult: user.id }),
     supabase.rpc("adult_has_pin"),
+    supabase.rpc("is_demo_account"),
   ]);
 
   if (account.error || consent.error || pin.error) {
@@ -46,6 +49,7 @@ export const getAdultContext = cache(async (): Promise<AdultContext | null> => {
     hasConsent: consent.data === true,
     hasPin: pin.data === true,
     childModeChildId: account.data?.child_mode_child_id ?? null,
+    isDemo: demo.data === true,
   };
 });
 

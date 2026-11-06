@@ -351,6 +351,26 @@ try {
   check("the credential stays valid after withdrawal", (await anon.rpc("verify_credential", { code: pitchReady?.verification_code })).data?.status === "valid");
   check("the real-child-data gate is still off (non-demo profiles refused)",
     Boolean((await B.client.from("child_profiles").insert({ guardian_id: B.id, nickname: "Real", age_band: "10-11", is_demo: false })).error));
+
+  console.log("\nOne-click demo accounts (0012)");
+  const visitor = "d".repeat(64);
+  check("parents and anonymous visitors cannot use the demo-account functions",
+    Boolean((await A.client.rpc("demo_account_allowed", { client_hash: visitor })).error) &&
+    Boolean((await anon.rpc("register_demo_account", { user_id: A.id, client_hash: visitor })).error) &&
+    Boolean((await A.client.rpc("purge_expired_demo_accounts")).error) &&
+    Boolean((await A.client.from("demo_accounts").select("user_id")).error));
+  const demo = await makeParent("demo");
+  check("the server can check limits and register a fresh demo account",
+    (await admin.rpc("demo_account_allowed", { client_hash: visitor })).data === "ok" &&
+    (await admin.rpc("register_demo_account", { user_id: demo.id, client_hash: visitor })).data === "ok");
+  check("the demo parent is recognised as a demo account; others are not",
+    (await demo.client.rpc("is_demo_account")).data === true && (await A.client.rpc("is_demo_account")).data === false);
+  await admin.from("demo_accounts").update({ expires_at: new Date(Date.now() - 60_000).toISOString() }).eq("user_id", demo.id);
+  const purgedDemos = await admin.rpc("purge_expired_demo_accounts");
+  check("expired demo accounts are deleted with everything in them", !purgedDemos.error && purgedDemos.data >= 1 &&
+    (await admin.auth.admin.getUserById(demo.id)).data?.user == null && (await admin.from("adult_accounts").select("id").eq("id", demo.id)).data?.length === 0,
+    purgedDemos.error?.message);
+  check("real parents are untouched by the demo purge", (await admin.from("adult_accounts").select("id").eq("id", A.id)).data?.length === 1);
 } catch (err) {
   failed++;
   console.error(`\n✗ Aborted: ${err.message}`);

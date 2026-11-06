@@ -57,7 +57,9 @@ Status: Phase 0 design · **Implemented in Phase 1** as `supabase/migrations/202
 > - `credential_issuances` gains `issuer_address`, `nonce`, `raw_tx`, `block_number`, `attempts`, `locked_until`, `updated_at`, plus the status `cancelled` and shape checks for `submitted`/`confirmed`. Confirmed rows are immutable except for revocation.
 > - Functions: `canonical_json`, `credential_hash_of`, `credential_proof`, `issue_credential` (internal); `set_credential_anchoring` and `retry_credential_anchoring` (parent, not in Child Mode); `claim_credential_anchor_jobs` and `record_credential_anchor` (service role only); `verify_credential` (anon, minimal output). `evaluate_achievements` issues both credential types.
 >
-> Applied to the hosted dev project on 2026-11-06 (0001–0011 + seed). See `docs/CHILD_SAFETY_AND_PRIVACY.md` §9.1.
+> **0012 demo accounts** (`…20261106001200_demo_accounts.sql`): `demo_accounts` (user_id → auth.users, keyed visitor hash, expires_at = +48 h; no client access). `demo_account_allowed` (3/hour per visitor, 200/day), `register_demo_account` and `purge_expired_demo_accounts` (service role only; deleting the auth user cascades to everything); `is_demo_account()` for the signed-in adult. Hourly `pg_cron` job `lf-purge-demo-accounts`.
+>
+> Applied to the hosted dev project on 2026-11-06 (0001–0012 + seed). See `docs/CHILD_SAFETY_AND_PRIVACY.md` §9.1.
 
 Target: Supabase Postgres with Row-Level Security (RLS) on every table.
 

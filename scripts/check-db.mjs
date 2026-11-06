@@ -1056,6 +1056,48 @@ await as("authenticated", B, async () => {
   await setAnchoring(childB, false);
 });
 
+console.log("\nOne-click demo accounts (0012)");
+const hashOf = (c) => c.repeat(64);
+await as("authenticated", B, async () => {
+  check("a normal parent is not a demo account", (await rows("select public.is_demo_account() as r"))[0].r === false);
+  for (const [label, sql] of [["check demo limits", "select public.demo_account_allowed($1)"], ["register demo accounts", "select public.register_demo_account(gen_random_uuid(), $1)"]]) {
+    await expectError(`parents cannot ${label}`, () => db.query(sql, [hashOf("a")]), /permission denied/);
+  }
+  await expectError("parents cannot run the demo purge", () => db.query("select public.purge_expired_demo_accounts()"), /permission denied/);
+  await expectError("demo account records are not readable by clients", () => db.query("select * from public.demo_accounts"), /permission denied/);
+});
+await as("anon", null, () =>
+  expectError("anonymous visitors cannot register demo accounts", () => db.query("select public.register_demo_account(gen_random_uuid(), $1)", [hashOf("a")]), /permission denied/));
+const demoUser = async (email) => {
+  const id = (await rows("insert into auth.users (id, email) values (gen_random_uuid(), $1) returning id", [email]))[0].id;
+  return id;
+};
+const svc = async (sql, params) => as("service_role", null, async () => (await rows(sql, params))[0].r);
+const D1 = await demoUser("demo-1@example.test");
+check("a new demo account is registered", (await svc("select public.register_demo_account($1, $2) as r", [D1, hashOf("b")])) === "ok");
+check("a malformed visitor hash is refused", (await svc("select public.register_demo_account($1, $2) as r", [D1, "not-a-hash"])) === "invalid");
+check("an unknown user can't be registered", (await svc("select public.register_demo_account(gen_random_uuid(), $1) as r", [hashOf("b")])) === "not_found");
+await db.query("update public.adult_accounts set created_at = now() - interval '1 hour' where id = $1", [B]);
+check("an existing (older) account can't be turned into a demo account", (await svc("select public.register_demo_account($1, $2) as r", [B, hashOf("b")])) === "too_old");
+await as("authenticated", D1, async () => {
+  check("the demo parent is recognised as a demo account", (await rows("select public.is_demo_account() as r"))[0].r === true);
+});
+for (const email of ["demo-2@example.test", "demo-3@example.test"]) {
+  await svc("select public.register_demo_account($1, $2) as r", [await demoUser(email), hashOf("b")]);
+}
+check("3 demo accounts per visitor per hour", (await svc("select public.demo_account_allowed($1) as r", [hashOf("b")])) === "rate_limited");
+check("another visitor can still make one", (await svc("select public.demo_account_allowed($1) as r", [hashOf("c")])) === "ok");
+await db.query(`insert into public.consent_records (guardian_id, consent_type, notice_version, typed_name) values ($1, 'core_processing', 'demo-account', 'Demo Parent')`, [D1]);
+const demoKid = (await rows(`insert into public.child_profiles (guardian_id, nickname, age_band, is_demo) values ($1, 'Demo Nova', '10-11', true) returning id`, [D1]))[0].id;
+await db.query("update public.demo_accounts set expires_at = now() - interval '1 minute' where user_id = $1", [D1]);
+const purgedDemo = await svc("select public.purge_expired_demo_accounts() as r");
+check("expired demo accounts are purged (only the expired one)", purgedDemo === 1, String(purgedDemo));
+check("the purge removes the demo parent, consent and child",
+  (await rows("select 1 from auth.users where id = $1 union all select 1 from public.adult_accounts where id = $1 union all select 1 from public.consent_records where guardian_id = $1 union all select 1 from public.child_profiles where id = $2", [D1, demoKid])).length === 0);
+check("unexpired demo accounts and real parents are untouched",
+  (await rows("select count(*)::int n from public.demo_accounts"))[0].n === 2 && (await rows("select 1 from public.adult_accounts where id = $1", [B])).length === 1);
+check("the purge is in the audit log", (await rows("select 1 from public.audit_log where action = 'demo.purged' and target_id = $1", [D1])).length === 1);
+
 console.log("\nDeletion");
 await db.query("delete from public.child_profiles where id = $1", [childA]); // server/service path
 check("deleting a child cascades to all their projects",

@@ -832,6 +832,30 @@ try {
   await page.getByLabel("Parent PIN").fill("3691");
   await submit("Parent area");
 
+  console.log("\nOne-click demo account");
+  const demoCtx = await browser.newContext();
+  const demoPage = await demoCtx.newPage();
+  await demoPage.goto(BASE + "/sign-up", { waitUntil: "networkidle" });
+  if ((await demoPage.getByRole("button", { name: "Try the demo" }).count()) === 0) {
+    notes.push("demo button not shown (DEMO_ACCOUNTS_ENABLED is not \"true\" in this build) — demo checks skipped");
+  } else {
+    await Promise.all([demoPage.waitForURL("**/parent?demo=1", { timeout: 30000 }), demoPage.getByRole("button", { name: "Try the demo" }).click()]);
+    const demoRow = (await admin.from("demo_accounts").select("user_id").order("created_at", { ascending: false }).limit(1)).data?.[0];
+    if (demoRow) createdUsers.push(demoRow.user_id);
+    check("Try the demo signs straight into a ready demo account", (await has(/You.re using a demo account/, demoPage)) && (await has(/2580/, demoPage)));
+    check("the demo account has one fictional demo child", (await has(/Demo (Nova|Kai|Zara|Leo|Mira|Theo)/, demoPage)) && (await has(/Demo profile/, demoPage)));
+    await demoPage.getByRole("button", { name: /Start Child Mode/ }).first().click();
+    await demoPage.waitForURL("**/play", { timeout: 15000 }).catch(() => {});
+    await demoPage.goto(BASE + "/play/exit", { waitUntil: "networkidle" });
+    check("the exit screen reminds demo users of the PIN", await has(/Demo account: the parent PIN is 2580/, demoPage));
+    await demoPage.getByLabel("Parent PIN").fill("2580");
+    await Promise.all([demoPage.waitForURL("**/parent**", { timeout: 15000 }), demoPage.getByRole("button", { name: /Parent area/ }).click()]);
+    check("the demo PIN leaves Child Mode", new URL(demoPage.url()).pathname.startsWith("/parent"));
+    const expiry = (await admin.from("demo_accounts").select("expires_at").eq("user_id", demoRow?.user_id).single()).data?.expires_at;
+    check("the demo account is set to expire in about 48 hours", expiry && Math.abs(new Date(expiry) - Date.now() - 48 * 3600e3) < 10 * 60e3);
+  }
+  await demoCtx.close();
+
   console.log("\nNo sensitive data in URLs or console");
   check("no console errors", consoleErrors.length === 0, consoleErrors.slice(0, 12).join(" | "));
 } catch (err) {

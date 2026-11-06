@@ -12,6 +12,7 @@ import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
 import { requireParent } from "@/lib/auth/session";
 import { getChildActivity, listChildren } from "@/lib/data/children";
+import { DEMO_LIFETIME_HOURS, DEMO_PIN } from "@/lib/demo";
 
 export const metadata: Metadata = { title: "Parent Dashboard" };
 
@@ -51,6 +52,14 @@ async function Dashboard({ searchParams }: { searchParams: PageProps<"/parent">[
           </Link>
         ) : null}
       </div>
+
+      {ctx.isDemo ? (
+        <Alert tone="warning" className="mt-6" title="You're using a demo account">
+          Everything here is fictional. Your parent PIN is <strong>{DEMO_PIN}</strong> (you&apos;ll need it to leave Child Mode). This account
+          and everything in it is deleted automatically within {DEMO_LIFETIME_HOURS} hours. Tip: press <strong>Start Child Mode</strong> to
+          explore as a child.
+        </Alert>
+      ) : null}
 
       {banner ? (
         <Alert tone={banner.tone} className="mt-6">

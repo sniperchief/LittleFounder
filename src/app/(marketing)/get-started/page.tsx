@@ -2,9 +2,11 @@ import type { Metadata } from "next";
 import Link from "next/link";
 import { ArrowLeft, Clock } from "lucide-react";
 
+import { DemoAccountButton } from "@/components/auth/demo-account-button";
 import { Container } from "@/components/layout/container";
 import { Badge } from "@/components/ui/badge";
 import { buttonVariants } from "@/components/ui/button";
+import { demoAccountsEnabled } from "@/lib/demo";
 
 export const metadata: Metadata = {
   title: "Get started",
@@ -70,6 +72,12 @@ export default function GetStartedPage() {
             ))}
           </ol>
         </div>
+
+        {demoAccountsEnabled() ? (
+          <div className="mt-10">
+            <DemoAccountButton />
+          </div>
+        ) : null}
 
         <div className="mt-10 flex flex-col gap-3 sm:flex-row">
           <Link href="/sign-up" className={buttonVariants()}>

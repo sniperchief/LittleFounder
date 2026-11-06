@@ -3,16 +3,21 @@ import { Suspense } from "react";
 
 import { AuthCard } from "@/components/auth/auth-card";
 import { SignInForm } from "@/components/auth/auth-forms";
+import { DemoAccountButton } from "@/components/auth/demo-account-button";
+import { demoAccountsEnabled } from "@/lib/demo";
 
 export const metadata: Metadata = { title: "Sign in" };
 
 export default function SignInPage({ searchParams }: PageProps<"/sign-in">) {
   return (
-    <AuthCard title="Welcome back" description="Sign in to your parent account.">
-      <Suspense fallback={<SignInForm />}>
-        <SignInFormWithParams searchParams={searchParams} />
-      </Suspense>
-    </AuthCard>
+    <div className="space-y-5">
+      <AuthCard title="Welcome back" description="Sign in to your parent account.">
+        <Suspense fallback={<SignInForm />}>
+          <SignInFormWithParams searchParams={searchParams} />
+        </Suspense>
+      </AuthCard>
+      {demoAccountsEnabled() ? <DemoAccountButton /> : null}
+    </div>
   );
 }
 
