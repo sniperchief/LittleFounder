@@ -50,7 +50,14 @@ Status: Phase 0 design · **Implemented in Phase 1** as `supabase/migrations/202
 > - Content: `investor_personas.position/style`, `investor_questions.key/position/hint`, seeded from `src/content/investor-room.ts` (scores and feedback hidden by column grants).
 > - Functions acting for the child in Child Mode: `start_pitch`, `save_pitch` (allow-listed fields, privacy check, finish → version), `start_investor_practice`, `answer_investor_question` (deterministic rubric). Internal: `pitch_personal_info`, `own_words_bonus`, `pitch_snapshot`, `pitch_fields_problem`, `pitch_apply_fields`. `evaluate_achievements` gains `pitches_completed` (First Pitch) and `practices_completed` (Confident Founder).
 >
-> Applied to the hosted dev project on 2026-11-06 (0001–0010 + seed). See `docs/CHILD_SAFETY_AND_PRIVACY.md` §9.1.
+> **Phase 7 additions** (`…20261106001100_credentials.sql`, rules in `docs/CREDENTIALS.md`):
+> - Hardening: `public.in_child_mode()`; the client write policies on `adult_accounts`, `consent_records` and `child_profiles` now refuse writes while the account is in Child Mode. Clients may only insert `core_processing` consent themselves.
+> - `certificate_types.description`; second credential type `pitch-ready` (practice score ≥ 70); both `onchain_eligible`.
+> - `certificates` gains `format_version`, `evidence`, `document` (canonical credential JSON) and `credential_hash` (SHA-256, `LF-CANON-1`), backfilled for existing rows with a salt in `credential_secrets`. Immutable except `active → revoked`.
+> - `credential_issuances` gains `issuer_address`, `nonce`, `raw_tx`, `block_number`, `attempts`, `locked_until`, `updated_at`, plus the status `cancelled` and shape checks for `submitted`/`confirmed`. Confirmed rows are immutable except for revocation.
+> - Functions: `canonical_json`, `credential_hash_of`, `credential_proof`, `issue_credential` (internal); `set_credential_anchoring` and `retry_credential_anchoring` (parent, not in Child Mode); `claim_credential_anchor_jobs` and `record_credential_anchor` (service role only); `verify_credential` (anon, minimal output). `evaluate_achievements` issues both credential types.
+>
+> Applied to the hosted dev project on 2026-11-06 (0001–0011 + seed). See `docs/CHILD_SAFETY_AND_PRIVACY.md` §9.1.
 
 Target: Supabase Postgres with Row-Level Security (RLS) on every table.
 
@@ -254,7 +261,8 @@ Unique (deck_id, version); FK (deck_id, child_id) → pitch_decks. Immutable; gu
 | child_id | achievement_id | earned_at | source_event | Unique (child_id, achievement_id) |
 
 ### `certificates` 🔴
-| id | child_id | certificate_type_id | issued_at | verification_code text unique (random, 10+ chars, unguessable) | status (`active`\|`revoked`) |
+| id | child_id | certificate_type_id | issued_at | verification_code text unique (random, 24 hex) | status (`active`\|`revoked`) | format_version | evidence jsonb | document jsonb | credential_hash (SHA-256 hex) |
+Issued only by `evaluate_achievements` → `issue_credential`; unique (child_id, certificate_type_id); immutable except `active → revoked` (Phase 7).
 
 ### `credential_issuances` 🔵 (public-safe columns) / 🟡
 | Column | Notes |
@@ -266,9 +274,12 @@ Unique (deck_id, version); FK (deck_id, child_id) → pitch_decks. Immutable; gu
 | attestation_uid | returned by EAS |
 | tx_hash | |
 | subject_commitment | bytes32 hex, as written on-chain |
-| status | `pending`\|`submitted`\|`confirmed`\|`failed`\|`revoked` |
-| error | text |
+| status | `pending`\|`submitted`\|`confirmed`\|`failed`\|`cancelled`\|`revoked` |
+| error | text (≤ 500) |
+| issuer_address / nonce / raw_tx | stored before broadcasting so retries re-send the same signed transaction (Phase 7) |
+| block_number / attempts / locked_until / updated_at | worker bookkeeping (2-minute lease) |
 | created_at / confirmed_at / revoked_at | |
+Written only by the service-role worker functions; confirmed rows are immutable except for revocation.
 
 ### `credential_secrets` 🟡 (service-role only; RLS denies all)
 | certificate_id FK PK | salt bytea | created_at |

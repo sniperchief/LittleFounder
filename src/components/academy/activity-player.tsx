@@ -73,6 +73,8 @@ export function ActivityPlayer({ activity, lessonKey, solved: initiallySolved, c
   }
 
   const ok = result?.status === "ok" ? result : null;
+  // "Pick all that apply": every ticked option is right, but at least one right option is still unticked.
+  const partlyRight = Boolean(ok && !ok.correct && activity.kind === "choose" && activity.multi && ok.feedback.length > 0 && ok.feedback.every((f) => f.correct));
   const wrongItems = new Set(ok && !ok.correct ? ok.wrong : []);
   const feedbackFor = (i: number) => ok?.feedback.find((f) => f.option === i);
 
@@ -209,7 +211,16 @@ export function ActivityPlayer({ activity, lessonKey, solved: initiallySolved, c
               </div>
             </div>
           ) : null}
-          {ok && !ok.correct ? (
+          {partlyRight ? (
+            <div className="flex items-start gap-3 rounded-xl border-2 border-sun bg-sun-soft px-4 py-3">
+              <Lightbulb className="mt-0.5 size-6 shrink-0 text-ink" aria-hidden="true" />
+              <div>
+                <p className="font-bold text-ink">Good pick{ok!.feedback.length > 1 ? "s" : ""} — but there&apos;s more!</p>
+                <p className="text-ink/85">More than one answer is right here. Tick every one that fits, then check again.</p>
+              </div>
+            </div>
+          ) : null}
+          {ok && !ok.correct && !partlyRight ? (
             <div className="flex items-start gap-3 rounded-xl border-2 border-coral bg-coral-soft px-4 py-3">
               <XCircle className="mt-0.5 size-6 shrink-0 text-ink" aria-hidden="true" />
               <div>

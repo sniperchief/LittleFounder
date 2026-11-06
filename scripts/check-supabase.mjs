@@ -303,7 +303,54 @@ try {
     (await A.client.from("investor_sessions").select("id")).data?.length === 0 && (await A.client.from("investor_responses").select("score")).data?.length === 0);
   check("another family cannot edit it", (await A.client.rpc("save_pitch", { deck_id: pitch?.id, fields: { problem: "Hijack attempt" } })).data?.status === "not_in_child_mode");
   check("anon cannot start pitches", Boolean((await anon.rpc("start_pitch", { project_id: ideaB })).error));
+  console.log("\nHardening & credentials (Phase 7)");
+  check("Child Mode cannot record consent directly",
+    Boolean((await B.client.from("consent_records").insert({ guardian_id: B.id, consent_type: "core_processing", notice_version: "x", typed_name: "Child" })).error));
+  check("Child Mode cannot rename or remove profiles directly", denied(await B.client.from("child_profiles").update({ nickname: "Hacked" }).eq("id", childB).select()));
+  check("Child Mode cannot turn on credential anchoring",
+    (await call("set_credential_anchoring", { child: childB, enable: true, typed_name: "Test Parent", notice_version: "credentials-2026-11-v1" }))?.status === "child_mode_active");
+  const strong = await call("start_investor_practice", { deck_id: pitch?.id, persona_key: "penny" });
+  let practiceEnd;
+  for (const q of pennyQs) {
+    practiceEnd = await call("answer_investor_question", { session_id: strong?.id, question_id: q.id, option_id: pick(q, 3), note: "I explained this part clearly with my own words" });
+  }
+  check("a 100/100 practice issues the Pitch Ready credential from server-side progress", practiceEnd?.total_score === 100, JSON.stringify(practiceEnd));
   check("parent B leaves Child Mode with the PIN", (await call("exit_child_mode", { pin: "2580" })) === "ok");
+
+  const cred = (await B.client.from("certificates").select("id, verification_code, credential_hash, document, status, certificate_types(key)").eq("child_id", childB)).data ?? [];
+  const pitchReady = cred.find((c) => c.certificate_types?.key === "pitch-ready");
+  check("the credential has an id, type, hash, evidence document and active status",
+    Boolean(pitchReady) && /^[0-9a-f]{64}$/.test(pitchReady.credential_hash) && pitchReady.document.credentialId === pitchReady.id &&
+    pitchReady.document.evidence?.practiceScore === 100 && pitchReady.status === "active", JSON.stringify(cred).slice(0, 200));
+  check("credential salts are never readable by clients", Boolean((await B.client.from("credential_secrets").select("salt")).error) &&
+    denied(await anon.from("credential_secrets").select("salt")));
+  check("credentials cannot be changed by clients", denied(await B.client.from("certificates").update({ status: "revoked" }).eq("id", pitchReady?.id).select()));
+  check("anchoring consent cannot be inserted directly",
+    Boolean((await B.client.from("consent_records").insert({ guardian_id: B.id, child_id: childB, consent_type: "onchain_credential", notice_version: "x", typed_name: "Test Parent" })).error));
+  check("credentials_opt_in cannot be flipped directly", denied(await B.client.from("child_profiles").update({ credentials_opt_in: true }).eq("id", childB).select()));
+  check("another family cannot change the setting or read the credential",
+    (await A.client.rpc("set_credential_anchoring", { child: childB, enable: true, typed_name: "Intruder", notice_version: "credentials-2026-11-v1" })).data?.status === "not_found" &&
+    (await A.client.from("certificates").select("id")).data?.length === 0);
+  const on = await call("set_credential_anchoring", { child: childB, enable: true, typed_name: "Test Parent", notice_version: "credentials-2026-11-v1" });
+  check("the parent turns anchoring on and the credential is queued", on?.status === "ok" && on.queued === 1, JSON.stringify(on));
+  const consentRow = (await B.client.from("consent_records").select("granted_at, withdrawn_at, notice_version").eq("child_id", childB).eq("consent_type", "onchain_credential")).data ?? [];
+  check("the explicit choice is recorded with a timestamp", consentRow.length === 1 && consentRow[0].granted_at && !consentRow[0].withdrawn_at);
+  check("the anchoring worker is not callable by parents or anonymous visitors",
+    Boolean((await B.client.rpc("claim_credential_anchor_jobs", { max_jobs: 1 })).error) && Boolean((await anon.rpc("claim_credential_anchor_jobs", { max_jobs: 1 })).error) &&
+    Boolean((await B.client.rpc("record_credential_anchor", { issuance_id: pitchReady?.id, outcome: "confirmed", details: {} })).error));
+  check("parents cannot mark anchoring records confirmed", denied(await B.client.from("credential_issuances").update({ status: "confirmed" }).eq("certificate_id", pitchReady?.id).select()));
+  const v = (await anon.rpc("verify_credential", { code: pitchReady?.verification_code })).data;
+  check("public verification confirms the credential and its hash", v?.status === "valid" && v.integrity?.hash_matches === true && v.credential?.title === "Pitch Ready Learning Milestone");
+  check("public verification shows no child id, nickname, evidence or hash",
+    !JSON.stringify(v).includes(childB) && !/Demo Ben/.test(JSON.stringify(v)) && !JSON.stringify(v).includes(pitchReady?.credential_hash) && !/evidence|subject/.test(JSON.stringify(v)));
+  check("unknown codes reveal nothing", (await anon.rpc("verify_credential", { code: "zzzzzzzzzzzzzzzzzzzzzzzz" })).data?.status === "not_found");
+  const off = await call("set_credential_anchoring", { child: childB, enable: false });
+  check("withdrawing stops anchoring and cancels the unsent proof", off?.status === "ok" && off.withdrawn === true &&
+    (await B.client.from("credential_issuances").select("status").eq("certificate_id", pitchReady?.id).single()).data?.status === "cancelled");
+  check("the withdrawal is recorded, not deleted", (await B.client.from("consent_records").select("withdrawn_at").eq("child_id", childB).eq("consent_type", "onchain_credential")).data?.[0]?.withdrawn_at !== null);
+  check("the credential stays valid after withdrawal", (await anon.rpc("verify_credential", { code: pitchReady?.verification_code })).data?.status === "valid");
+  check("the real-child-data gate is still off (non-demo profiles refused)",
+    Boolean((await B.client.from("child_profiles").insert({ guardian_id: B.id, nickname: "Real", age_band: "10-11", is_demo: false })).error));
 } catch (err) {
   failed++;
   console.error(`\n✗ Aborted: ${err.message}`);

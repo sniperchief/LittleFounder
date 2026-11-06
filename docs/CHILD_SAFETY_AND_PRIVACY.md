@@ -68,7 +68,7 @@ Authentication: Supabase Auth, adults only, verified email, password ≥ 10 char
 2. Adult declares they are 18+ and the parent/legal guardian (checkbox, not pre-ticked).
 3. **Parental privacy notice** (short layered summary + full notice): what we collect, why, how long, who processes it (Supabase, Vercel), where it's stored, rights, contact.
 4. Affirmative consent for **core processing** + typed full name as signature → `consent_records` row with `notice_version`.
-5. **Separate, optional** consent for **verifiable credential (on-chain)**, offered only when a certificate is earned, with plain explanation that a non-personal record is permanent on a public network.
+5. **Separate, optional** consent for **verifiable credential (on-chain)**, offered only when a certificate is earned, with plain explanation that a non-personal record is permanent on a public network. *Implemented, Phase 7:* per child, off by default, parent-only (refused in Child Mode at the database level), three plain-language confirmations plus a typed name, recorded in `consent_records` (`onchain_credential`) with a timestamp. Withdrawal stops new proofs and can't erase recorded ones. See `docs/CREDENTIALS.md` §3.
 6. Consent withdrawal available at any time from Parent Settings; withdrawal of core consent triggers the deletion flow. **Not yet built — requirements in §9.2.**
 
 > MVP consent verification = email-verified adult account + attestation of guardianship. ⚖️ **Whether this meets NDPA s.31 "appropriate mechanisms to verify" and GAID age-verification expectations is the #1 compliance question.** Stronger options for later: small card-authorisation check, government-ID check via provider, school-mediated consent, or a signed consent form.
@@ -101,6 +101,9 @@ Authentication: Supabase Auth, adults only, verified email, password ≥ 10 char
 - The only public route showing anything about a child is `/verify/[code]`, which exposes **no personal data** (credential type, date, issuer, status) and uses an unguessable code; it is `noindex`.
 - Investor personas are scripted characters, not people; there is no live human interaction.
 - Printing/exporting a deck is done by the adult or on the adult's device — sharing is a family decision outside the platform.
+
+### Child Mode hardening (Phase 7)
+Child Mode runs under the parent's session on the child's device, so the database also refuses parent-only writes while Child Mode is active (consent, profile create/rename/remove, account details, credential anchoring). Setting a new password needs a fresh password-reset link (`amr` = `otp`/`recovery` within 15 minutes) and is refused in Child Mode, so a child can't take over the parent account from `/reset-password`. Baseline headers: no framing (`X-Frame-Options: DENY`, `frame-ancestors 'none'`), `nosniff`, a strict referrer policy (`no-referrer` on `/verify`) and a restrictive `Permissions-Policy`.
 
 ### Free-text safeguards
 Children type in Idea Lab, decks and investor notes. Even though content is private, children may accidentally disclose personal info. MVP safeguards [Recommendation]:
@@ -224,7 +227,9 @@ Data processing agreements (DPAs) must be in place with each processor before pr
 
 Never: names/nicknames, age or age band, DOB, country/city/school, avatar, project names or text, deck content, scores tied to identity, email/addresses, IP, guardian identity, any value derivable from those by hashing without a secret salt (e.g. `hash(nickname)` is forbidden — it is dictionary-attackable).
 
-Allowed: credential type identifier, issuer address, issue timestamp, content version, `keccak256(credentialId || secretSalt)` commitment, revocation status.
+Allowed: credential type identifier, issuer address, issue timestamp, content version, a salted commitment, revocation status.
+
+*As implemented (Phase 7):* the only on-chain data is `credentialType` (`keccak256("little-founders:credential:<key>:v1")`), `credentialProof` = SHA-256(credential hash ‖ 32-byte secret salt) and `formatVersion = 1`, attested by the platform issuer to the zero address on Base Sepolia (block time is set by the chain). Salts never leave the database. See `docs/CREDENTIALS.md` §4.
 
 ---
 

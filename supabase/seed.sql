@@ -346,11 +346,14 @@ on conflict (key) do update
   set title = excluded.title, description = excluded.description, icon_key = excluded.icon_key,
       rule = excluded.rule, tier = excluded.tier;
 
--- Certificates are learning milestones, not formal qualifications. Not on-chain (Phase 7).
-insert into public.certificate_types (key, title, requirement, onchain_eligible) values
-  ('founder-academy-milestone', 'Founder Academy Learning Milestone', '{"type":"modules_completed","count":6}'::jsonb, false)
+-- Credentials are learning milestones, not formal qualifications. onchain_eligible = a parent
+-- may opt in to an anonymous Base Sepolia proof (docs/CREDENTIALS.md).
+insert into public.certificate_types (key, title, description, requirement, onchain_eligible) values
+  ('founder-academy-milestone', 'Founder Academy Learning Milestone', 'Completed all six Founder Academy modules, including every lesson and quiz.', '{"type":"modules_completed","count":6}'::jsonb, true),
+  ('pitch-ready', 'Pitch Ready Learning Milestone', 'Scored 70 or more in an Investor Room practice with a finished pitch.', '{"type":"practice_score","min":70}'::jsonb, true)
 on conflict (key) do update
-  set title = excluded.title, requirement = excluded.requirement;
+  set title = excluded.title, description = excluded.description, requirement = excluded.requirement,
+      onchain_eligible = excluded.onchain_eligible;
 
 -- Startup Simulator challenges (Founder Bucks are pretend, virtual units). Rules: docs/STARTUP_SIMULATOR.md
 insert into public.simulator_scenarios (key, title, product_kind, starting_budget, unit_cost_base, demand_params, rounds) values

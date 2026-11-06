@@ -78,11 +78,22 @@ export const extraAchievements: AchievementContent[] = [
   },
 ];
 
-// A learning milestone — not a formal educational qualification.
+// Credentials: learning milestones, not formal educational qualifications. Issued by
+// public.evaluate_achievements from stored progress (docs/CREDENTIALS.md). Badges above are
+// never anchored on a blockchain; only these milestones can be, after parent opt-in.
 export const certificates: CertificateContent[] = [
   {
     key: "founder-academy-milestone",
     title: "Founder Academy Learning Milestone",
+    description: "Completed all six Founder Academy modules, including every lesson and quiz.",
+    anchorable: true,
     requirement: { type: "modules_completed", count: 6 },
+  },
+  {
+    key: "pitch-ready",
+    title: "Pitch Ready Learning Milestone",
+    description: "Scored 70 or more in an Investor Room practice with a finished pitch.",
+    anchorable: true,
+    requirement: { type: "practice_score", min: 70 },
   },
 ];

@@ -205,11 +205,13 @@ on conflict (key) do update
   set title = excluded.title, description = excluded.description, icon_key = excluded.icon_key,
       rule = excluded.rule, tier = excluded.tier;
 
--- Certificates are learning milestones, not formal qualifications. Not on-chain (Phase 7).
-insert into public.certificate_types (key, title, requirement, onchain_eligible) values
-  ${certificates.map((c) => `(${list([c.key, c.title])}, ${json(c.requirement)}, false)`).join(",\n  ")}
+-- Credentials are learning milestones, not formal qualifications. onchain_eligible = a parent
+-- may opt in to an anonymous Base Sepolia proof (docs/CREDENTIALS.md).
+insert into public.certificate_types (key, title, description, requirement, onchain_eligible) values
+  ${certificates.map((c) => `(${list([c.key, c.title, c.description])}, ${json(c.requirement)}, ${c.anchorable})`).join(",\n  ")}
 on conflict (key) do update
-  set title = excluded.title, requirement = excluded.requirement;
+  set title = excluded.title, description = excluded.description, requirement = excluded.requirement,
+      onchain_eligible = excluded.onchain_eligible;
 
 -- Startup Simulator challenges (Founder Bucks are pretend, virtual units). Rules: docs/STARTUP_SIMULATOR.md
 insert into public.simulator_scenarios (key, title, product_kind, starting_budget, unit_cost_base, demand_params, rounds) values

@@ -324,7 +324,12 @@ try {
         await option(wrongLabel).check();
         await page.getByRole("button", { name: "Check my answer" }).click();
         check("a wrong answer gets encouraging feedback", await has(/Not quite/));
-        if (a.config.multi) await option(wrongLabel).uncheck();
+        if (a.config.multi) {
+          await option(wrongLabel).uncheck();
+          await option(a.config.options[a.answer_key.correct[0]]).check();
+          await page.getByRole("button", { name: /Check again/ }).click();
+          check("ticking only some right answers says there's more (not 'Not quite')", (await has(/there.s more/)) && !(await text()).includes("Not quite"));
+        }
       }
       for (const i of a.answer_key.correct) await option(a.config.options[i]).check();
     } else if (a.kind === "sort") {
@@ -686,6 +691,90 @@ try {
   await go(`/parent/children/${ben.id}`);
   check("the sibling has no pitches", await has(/No pitches created yet/));
 
+  console.log("\nCredentials & hardening (Phase 7)");
+  await go("/parent/settings");
+  await go("/reset-password");
+  await page.getByLabel(/^new password/i).fill(`${pwA2}-x`);
+  await page.getByLabel("Confirm new password").fill(`${pwA2}-x`);
+  await submit("password");
+  check("an ordinary signed-in session cannot set a new password without a fresh reset link", await has(/open the password reset link from your email again/));
+  await go("/profiles");
+  await page.getByRole("button", { name: /Demo Adaeze/ }).first().click();
+  await page.waitForURL("**/play", { timeout: 15000 }).catch(() => {});
+  await go("/reset-password");
+  await page.getByLabel(/^new password/i).fill(`${pwA2}-child`);
+  await page.getByLabel("Confirm new password").fill(`${pwA2}-child`);
+  await submit("password");
+  check("Child Mode cannot change the parent's password", path(page).startsWith("/play"), path(page));
+  const pwCheck = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL, process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, { auth: { persistSession: false } });
+  check("the parent's password is unchanged", !(await pwCheck.auth.signInWithPassword({ email: emailA, password: pwA2 })).error);
+  await go(`/parent/children/${ada.id}/credentials`);
+  check("Child Mode cannot open the parent credential settings", path(page).startsWith("/play"), path(page));
+
+  await go("/play/passport");
+  check("Passport lists both credentials, locked with progress", (await has(/My certificates/)) && (await has(/Founder Academy Learning Milestone/)) && (await has(/Your best practice score so far: 60\/100/)));
+  await go(`/play/pitch/${deckId}/investor`);
+  await page.getByRole("button", { name: /Practise with Inventor/ }).click();
+  await page.waitForURL(/\/investor\/[0-9a-f-]{36}$/, { timeout: 15000 }).catch(() => {});
+  await click(/I.m ready/);
+  const ivyQs = (await admin.from("investor_questions").select("position, investor_personas!inner(key), investor_answer_options(label, score)")
+    .eq("investor_personas.key", "ivy").order("position")).data ?? [];
+  for (const [i, q] of ivyQs.entries()) {
+    await has(new RegExp(`Question ${i + 1} of 5`));
+    await page.getByRole("radio", { name: q.investor_answer_options.find((o) => o.score === 3).label }).click();
+    await page.getByLabel(/Now say it in your own words/).fill("I can explain this part clearly in my own words");
+    await click(/Give my answer/);
+    await click(i === 4 ? /See my practice feedback/ : /Next question/);
+  }
+  await page.waitForURL(/\?done=1/, { timeout: 15000 }).catch(() => {});
+  check("a 100/100 practice is shown as Ready to grow", (await has(/\b100\b/)) && (await has(/Ready to grow/)));
+  const credRow = (await admin.from("certificates").select("id, verification_code, credential_hash, certificate_types!inner(key)").eq("child_id", ada.id).eq("certificate_types.key", "pitch-ready")).data?.[0];
+  check("the Pitch Ready credential is issued by the server with a hash", Boolean(credRow) && /^[0-9a-f]{64}$/.test(credRow.credential_hash));
+  await go("/play/passport");
+  check("Passport shows the earned credential with child-friendly status", (await has(/Pitch Ready Learning Milestone/)) && (await has(/Checked & genuine/)) && (await has(/Check it.s real/)));
+  check("Passport uses no blockchain jargon", !/blockchain|wallet|gas|token|transaction|attestation|Base Sepolia/i.test(await text()));
+  await page.getByRole("link", { name: /Check it.s real/ }).first().click();
+  await page.waitForURL(/\/verify\/[A-Za-z0-9]+$/, { timeout: 15000 }).catch(() => {});
+  check("the verification page confirms the credential", (await has(/This credential is genuine/)) && (await has(/Pitch Ready Learning Milestone/)) && (await has(/matches its fingerprint/)));
+  const verifyHtml = await page.content();
+  check("the verification page shows no child name, id or hash", !/Adaeze|Demo Ada/.test(verifyHtml) && !verifyHtml.includes(ada.id) && !verifyHtml.includes(credRow.credential_hash));
+  check("no public proof was requested yet", await has(/No public blockchain proof was requested/));
+  const anonCtx = await browser.newContext();
+  const anonPage = await anonCtx.newPage();
+  await anonPage.goto(`${BASE}/verify/${credRow.verification_code}`, { waitUntil: "networkidle" });
+  check("anyone with the link can verify it without signing in", await has(/This credential is genuine/, anonPage));
+  await anonPage.goto(`${BASE}/verify/notarealcode000000`, { waitUntil: "networkidle" });
+  check("an unknown code reveals nothing", await has(/couldn.t find that credential/, anonPage));
+  await anonCtx.close();
+
+  await go("/play/exit");
+  await page.getByLabel("Parent PIN").fill("3691");
+  await submit("Parent area");
+  await go(`/parent/children/${ada.id}`);
+  await page.getByRole("link", { name: /Credentials/ }).first().click();
+  await page.waitForURL(/\/credentials$/, { timeout: 15000 }).catch(() => {});
+  check("the parent credential page explains public proofs and starts switched off",
+    (await has(/Public proofs \(optional\)/)) && (await has(/publicly viewable and may be permanent/)) && (await has(/no personal information/)) && (await has(/\bOff\b/)));
+  check("the parent sees technical details (credential hash)", await has(new RegExp(credRow.credential_hash)));
+  await submit("Turn on public proofs");
+  check("turning on needs every confirmation and the parent's name", (await has(/understand the proof is public and permanent/)) && (await has(/Type your full name/)));
+  for (const box of await page.getByRole("checkbox").all()) await box.check();
+  await page.getByLabel("Type your full name to confirm").fill("Demo Parent A");
+  await submit("Turn on public proofs");
+  check("public proofs turn on and the credential is queued", (await has(/Public proofs are on/)) && (await has(/Queued|Sent|Anchored|Failed/)));
+  const consentRows = (await admin.from("consent_records").select("granted_at, withdrawn_at, notice_version").eq("child_id", ada.id).eq("consent_type", "onchain_credential")).data ?? [];
+  const issuance = (await admin.from("credential_issuances").select("status, tx_hash").eq("certificate_id", credRow.id).maybeSingle()).data;
+  check("the opt-in is recorded with a timestamp and an anchoring record is created", consentRows.length === 1 && !consentRows[0].withdrawn_at && Boolean(issuance));
+  notes.push(`anchoring record after opt-in: ${issuance?.status}${issuance?.tx_hash ? ` ${issuance.tx_hash}` : ""} (depends on CREDENTIAL_* server configuration)`);
+  await page.getByRole("checkbox", { name: /Stop new public proofs/ }).check();
+  await submit("Turn off public proofs");
+  check("withdrawing stops new proofs and explains recorded ones stay", (await has(/Public proofs are off/)) && (await has(/stay on the public network/)));
+  const after = (await admin.from("credential_issuances").select("status").eq("certificate_id", credRow.id).maybeSingle()).data;
+  check("an unsent proof is cancelled; a sent or confirmed one is kept", ["cancelled", "submitted", "confirmed"].includes(after?.status));
+  check("the consent history shows both choices", (await has(/Turned on/)) && (await has(/turned off/)));
+  await go(`/verify/${credRow.verification_code}`);
+  check("the credential stays valid after withdrawal", await has(/This credential is genuine/));
+
   console.log("\nFamily isolation in the browser");
   const { data: ub } = await admin.auth.admin.createUser({ email: emailB, password: pwB, email_confirm: true });
   createdUsers.push(ub.user.id);
@@ -713,13 +802,15 @@ try {
   const r5 = await pB.goto(BASE + `/parent/children/${ada.id}/simulations/${simId}`, { waitUntil: "networkidle" });
   check("parent B cannot open parent A's child's simulation", (await has(/wandered off/, pB)) && !/1,550 FB/.test(await r5.text()), String(r5.status()));
   const r6 = await pB.goto(BASE + `/parent/children/${ada.id}/pitches/${deckId}`, { waitUntil: "networkidle" });
+  const r7 = await pB.goto(BASE + `/parent/children/${ada.id}/credentials`, { waitUntil: "networkidle" });
+  check("parent B cannot open parent A's child's credentials", (await has(/wandered off/, pB)) && !/Pitch Ready/.test(await r7.text()), String(r7.status()));
   check("parent B cannot open parent A's child's pitch", (await has(/wandered off/, pB)) && !/Puzzle Pup|at home all day/.test(await r6.text()), String(r6.status()));
   await ctxB.close();
 
   console.log("\nResponsive (signed-in pages)");
   for (const w of [320, 390, 768]) {
     await page.setViewportSize({ width: w, height: 800 });
-    for (const p of ["/parent", `/parent/children/${ada.id}`, `/parent/children/${ada.id}/pitches/${deckId}`, "/parent/children/new", "/parent/settings", "/profiles"]) {
+    for (const p of ["/parent", `/parent/children/${ada.id}`, `/parent/children/${ada.id}/pitches/${deckId}`, `/parent/children/${ada.id}/credentials`, "/parent/children/new", "/parent/settings", "/profiles"]) {
       await go(p);
       check(`${p.replace(/[0-9a-f-]{36}/, ":id")} @${w}px has no horizontal overflow`, !(await overflow()));
     }

@@ -340,7 +340,7 @@ const [counts] = await rows(`select
 check("curriculum seeded: 6 modules, 18 lessons, 18 activities, 30 questions",
   counts.modules === 6 && counts.lessons === 18 && counts.activities === 18 && counts.questions === 30, JSON.stringify(counts));
 check("every quiz question has exactly one correct option", counts.bad_questions === 0);
-check("15 achievements and 1 milestone certificate seeded", counts.achievements === 15 && counts.certs === 1);
+check("15 achievements and 2 credential milestones seeded", counts.achievements === 15 && counts.certs === 2);
 for (const role of ["anon", "authenticated"]) {
   await as(role, role === "anon" ? null : B, async () => {
     check(`${role} can read lessons and activity prompts`, (await rows("select l.key, a.config from public.lessons l join public.lesson_activities a on a.lesson_id = l.id")).length === 18);
@@ -879,6 +879,181 @@ await as("authenticated", B, async () => {
 await as("anon", null, async () => {
   await expectError("anonymous visitors cannot start pitches", () => db.query("select public.start_pitch(gen_random_uuid())"), /permission denied/);
   await expectError("anonymous visitors cannot read pitches", () => db.query("select * from public.pitch_versions"), /permission denied/);
+});
+
+console.log("\nHardening: parent-only writes are refused during Child Mode (Phase 7)");
+await as("authenticated", B, async () => {
+  await db.query("select public.enter_child_mode($1)", [childB]);
+  await expectError("Child Mode cannot record consent directly", () =>
+    db.query(`insert into public.consent_records (guardian_id, consent_type, notice_version, typed_name) values ($1, 'core_processing', 'x', 'Child')`, [B]),
+    /row-level security/);
+  check("Child Mode cannot rename or remove profiles directly",
+    (await rows("update public.child_profiles set nickname = 'Hacked', deleted_at = now() where id = $1 returning id", [childB])).length === 0);
+  check("Child Mode cannot change the parent account directly",
+    (await rows("update public.adult_accounts set display_name = 'Hacked' where id = $1 returning id", [B])).length === 0);
+  await expectError("Child Mode cannot add a child profile directly", () =>
+    db.query(`insert into public.child_profiles (guardian_id, nickname, age_band, is_demo) values ($1, 'Sneaky', '10-11', true)`, [B]),
+    /row-level security/);
+  check("Child Mode cannot turn on credential anchoring", (await fn("select public.set_credential_anchoring($1, true, 'Demo Parent B', 'credentials-2026-11-v1') as r", [childB])).status === "child_mode_active");
+  await db.query("select public.exit_child_mode('2580')");
+  check("outside Child Mode the parent can still rename the profile",
+    (await rows("update public.child_profiles set nickname = 'Demo Ben' where id = $1 returning id", [childB])).length === 1);
+  await expectError("anchoring consent cannot be inserted directly (even by the parent)", () =>
+    db.query(`insert into public.consent_records (guardian_id, child_id, consent_type, notice_version, typed_name) values ($1, $2, 'onchain_credential', 'x', 'Demo Parent B')`, [B, childB]),
+    /row-level security/);
+  await expectError("credentials_opt_in cannot be set directly", () =>
+    db.query("update public.child_profiles set credentials_opt_in = true where id = $1", [childB]), /permission denied/);
+});
+check("the real-child-data gate is still off", (await rows("select real_child_data_enabled r from public.app_settings"))[0].r === false &&
+  (await rows("select count(*)::int n from public.child_profiles where not is_demo"))[0].n === 0);
+
+console.log("\nCredentials: canonical form & hashing (Phase 7)");
+const { canonicalJson, credentialHash, credentialProof } = await import("../src/lib/credentials/canonical.ts");
+const canonSamples = [
+  { b: 1, a: { d: [3, 1, { z: true, y: null }], c: "x" } },
+  { "é": "café ☕", Z: "quote \" backslash \\ slash /", a: "tab\tnewline\ncontrol\u0001" },
+  { credentialId: "00000000-0000-4000-8000-000000000000", evidence: {}, formatVersion: 1, issuedAt: "2026-11-06T12:00:00Z", list: [] },
+];
+const canonMismatch = [];
+for (const doc of canonSamples) {
+  const [r] = await rows("select public.canonical_json($1::jsonb) c, public.credential_hash_of($1::jsonb) h", [JSON.stringify(doc)]);
+  if (r.c !== canonicalJson(doc) || r.h !== credentialHash(doc)) canonMismatch.push(`${r.c} ≠ ${canonicalJson(doc)}`);
+}
+check("canonical JSON and SHA-256 hash are identical in the database and the app", canonMismatch.length === 0, canonMismatch.join(" | "));
+check("canonical form sorts keys and removes whitespace", canonicalJson(canonSamples[0]) === '{"a":{"c":"x","d":[3,1,{"y":null,"z":true}]},"b":1}');
+await expectError("non-integer numbers are refused by the canonical form", () => db.query("select public.canonical_json('{\"x\": 1.5}'::jsonb)"), /only integers/);
+
+console.log("\nCredentials: issuance from verified progress (Phase 7)");
+const credsB = await rows(`select c.*, t.key type_key, s.salt from public.certificates c join public.certificate_types t on t.id = c.certificate_type_id
+  join public.credential_secrets s on s.certificate_id = c.id where c.child_id = $1 order by t.key`, [childB]);
+const academyCred = credsB.find((c) => c.type_key === "founder-academy-milestone");
+const pitchCred = credsB.find((c) => c.type_key === "pitch-ready");
+check("Academy completion and a 70+ practice issued exactly two credentials", credsB.length === 2 && academyCred && pitchCred, credsB.map((c) => c.type_key).join());
+check("the Academy credential records verified evidence", academyCred.evidence.modulesCompleted === 6 && academyCred.evidence.lessonsCompleted === 18 && academyCred.evidence.quizzesPassed === 6);
+check("the Pitch Ready credential records the qualifying practice", pitchCred.evidence.practiceScore === 100 && pitchCred.evidence.minimumScore === 70 && pitchCred.evidence.pitchVersion === 2);
+check("each credential document has id, type, title, issuer, issue time, evidence and the offchain subject",
+  credsB.every((c) => c.document.credentialId === c.id && c.document.type === c.type_key && c.document.issuer === "Little Founders" &&
+    c.document.subject === childB && c.document.formatVersion === 1 && c.document.issuedAt === new Date(c.issued_at).toISOString().replace(".000Z", "Z")));
+check("the stored hash matches an independent recomputation of the document", credsB.every((c) => c.credential_hash === credentialHash(c.document)));
+check("each credential has its own 32-byte random salt", credsB.every((c) => c.salt.length === 32) && Buffer.compare(Buffer.from(credsB[0].salt), Buffer.from(credsB[1].salt)) !== 0);
+check("a child who hasn't earned them has no credentials", (await rows("select 1 from public.certificates where child_id = $1", [restored])).length === 0);
+await db.query("select public.evaluate_achievements($1, 'recheck')", [childB]);
+check("re-evaluating progress never issues a duplicate", (await rows("select count(*)::int n from public.certificates where child_id = $1", [childB]))[0].n === 2);
+await expectError("issued credential documents are immutable even for the server", () =>
+  db.query("update public.certificates set document = document || '{\"title\":\"Forged\"}' where id = $1", [academyCred.id]), /cannot be changed/);
+await expectError("credential salts are immutable", () =>
+  db.query("update public.credential_secrets set salt = extensions.gen_random_bytes(32) where certificate_id = $1", [academyCred.id]), /cannot be changed/);
+await as("authenticated", B, async () => {
+  const mine = await rows("select id, credential_hash, verification_code from public.certificates where child_id = $1", [childB]);
+  check("the parent can read their child's credentials", mine.length === 2);
+  await expectError("salts are never readable by clients", () => db.query("select salt from public.credential_secrets"), /permission denied/);
+  await expectError("credentials cannot be issued by clients", () =>
+    db.query("insert into public.certificates (child_id, certificate_type_id, verification_code, evidence, document, credential_hash) select $1, id, 'abcdefabcdef12', '{}', '{}', repeat('a', 64) from public.certificate_types limit 1", [childB]), /permission denied/);
+  await expectError("credential internals are not callable", () => db.query("select public.issue_credential($1, gen_random_uuid(), '{}')", [childB]), /permission denied/);
+  await expectError("salted proofs are not callable by clients", () => db.query("select public.credential_proof($1)", [academyCred.id]), /permission denied/);
+});
+await as("authenticated", A, async () => {
+  check("another family cannot read B's credentials", (await rows("select 1 from public.certificates union all select 1 from public.credential_issuances")).length === 0);
+});
+
+console.log("\nCredentials: parent consent for anchoring (Phase 7)");
+const setAnchoring = (child, enable, name = null, version = null) =>
+  fn("select public.set_credential_anchoring($1, $2, $3, $4) as r", [child, enable, name, version]);
+await as("authenticated", A, async () => {
+  check("another family cannot change B's anchoring setting", (await setAnchoring(childB, true, "Intruder", "credentials-2026-11-v1")).status === "not_found");
+});
+await as("authenticated", B, async () => {
+  check("anchoring is off by default", (await rows("select credentials_opt_in from public.child_profiles where id = $1", [childB]))[0].credentials_opt_in === false &&
+    (await rows("select 1 from public.credential_issuances")).length === 0);
+  check("turning it on needs the typed name", (await setAnchoring(childB, true, "", "credentials-2026-11-v1")).status === "invalid");
+  check("turning it on needs the current notice version", (await setAnchoring(childB, true, "Demo Parent B", "old-notice")).status === "invalid");
+  const on = await setAnchoring(childB, true, "Demo Parent B", "credentials-2026-11-v1");
+  check("the parent turns anchoring on and both eligible credentials are queued", on.status === "ok" && on.queued === 2);
+  const [rec] = await rows("select consent_type, child_id, notice_version, typed_name, granted_at, withdrawn_at from public.consent_records where consent_type = 'onchain_credential'");
+  check("the explicit choice is recorded with a timestamp, separate from core consent",
+    rec.child_id === childB && rec.notice_version === "credentials-2026-11-v1" && rec.typed_name === "Demo Parent B" && rec.granted_at && rec.withdrawn_at === null);
+  check("turning it on twice doesn't duplicate the consent", (await setAnchoring(childB, true, "Demo Parent B", "credentials-2026-11-v1")).already === true &&
+    (await rows("select count(*)::int n from public.consent_records where consent_type = 'onchain_credential'"))[0].n === 1);
+  check("queued records are pending with nothing sent yet",
+    (await rows("select status, tx_hash from public.credential_issuances")).every((r) => r.status === "pending" && r.tx_hash === null));
+  await expectError("clients cannot write anchoring records", () =>
+    db.query("update public.credential_issuances set status = 'confirmed'"), /permission denied/);
+  await expectError("parents cannot run the anchoring worker", () => db.query("select public.claim_credential_anchor_jobs(5)"), /permission denied/);
+  await expectError("parents cannot record anchoring results", () =>
+    db.query("select public.record_credential_anchor(gen_random_uuid(), 'confirmed', '{}')"), /permission denied/);
+});
+await as("anon", null, async () => {
+  await expectError("anonymous visitors cannot change anchoring", () => db.query("select public.set_credential_anchoring(gen_random_uuid(), true)"), /permission denied/);
+  await expectError("anonymous visitors cannot run the worker", () => db.query("select public.claim_credential_anchor_jobs(1)"), /permission denied/);
+});
+
+console.log("\nCredentials: anchoring state machine (Phase 7; simulated chain values, no network)");
+const fakeHex = (n) => `0x${String(n).repeat(64).slice(0, 64)}`;
+const claimed = await as("service_role", null, async () => (await rows("select public.claim_credential_anchor_jobs(5) as r"))[0].r);
+const expectedProofs = Object.fromEntries(credsB.map((c) => [c.id, credentialProof(c.credential_hash, c.salt)]));
+check("the worker gets both jobs with the salted proof (= SHA-256(hash || salt), checked independently)",
+  claimed.length === 2 && claimed.every((j) => j.status === "pending" && j.proof === expectedProofs[j.certificate_id]));
+check("the proof sent on-chain contains only a type key and a 32-byte value — no child data",
+  claimed.every((j) => /^0x[0-9a-f]{64}$/.test(j.proof) && !JSON.stringify(j).includes(childB) && !/Demo Ben/.test(JSON.stringify(j))));
+check("claimed jobs are leased so a second worker can't double-send", (await as("service_role", null, async () => (await rows("select public.claim_credential_anchor_jobs(5) as r"))[0].r)).length === 0);
+const rec = (id, outcome, details) => as("service_role", null, async () =>
+  (await rows("select public.record_credential_anchor($1, $2, $3::jsonb) as r", [id, outcome, JSON.stringify(details)]))[0].r);
+const [jobA, jobP] = [claimed.find((j) => j.credential_type === "founder-academy-milestone"), claimed.find((j) => j.credential_type === "pitch-ready")];
+const issuer = "0x1111111111111111111111111111111111111111";
+const schemaUidFake = fakeHex("c");
+check("a record cannot jump from queued to confirmed", (await rec(jobA.id, "confirmed", { tx_hash: fakeHex("a") })).status === "invalid_transition");
+check("a submission with the wrong proof is refused", (await rec(jobA.id, "submitted", { tx_hash: fakeHex("a"), raw_tx: "0x02ab", nonce: 7, issuer_address: issuer, schema_uid: schemaUidFake, proof: fakeHex("9") })).status === "proof_mismatch");
+check("the tx hash is stored before broadcasting", (await rec(jobA.id, "submitted", { tx_hash: fakeHex("a"), raw_tx: "0x02ab", nonce: 7, issuer_address: issuer, schema_uid: schemaUidFake, proof: jobA.proof })).status === "ok");
+check("a submitted record can't be submitted again (no duplicate transaction)", (await rec(jobA.id, "submitted", { tx_hash: fakeHex("b"), raw_tx: "0x02cd", nonce: 8, proof: jobA.proof })).status === "invalid_transition");
+check("confirmation must match the stored transaction and proof", (await rec(jobA.id, "confirmed", { tx_hash: fakeHex("b"), attestation_uid: fakeHex("d"), block_number: 1, schema_uid: schemaUidFake, proof: jobA.proof })).status === "proof_mismatch");
+check("a verified attestation marks the record confirmed", (await rec(jobA.id, "confirmed", { tx_hash: fakeHex("a"), attestation_uid: fakeHex("d"), block_number: 123, schema_uid: schemaUidFake, proof: jobA.proof })).status === "ok");
+check("a confirmed record can't be marked failed", (await rec(jobA.id, "failed", { error: "x" })).status === "invalid_transition");
+await expectError("confirmed anchoring records are immutable", () =>
+  db.query("update public.credential_issuances set tx_hash = $2 where id = $1", [jobA.id, fakeHex("e")]), /cannot be changed/);
+check("a failed attempt keeps the offchain credential valid", (await rec(jobP.id, "failed", { error: "simulated RPC failure" })).status === "ok" &&
+  (await rows("select status from public.certificates where id = $1", [jobP.certificate_id]))[0].status === "active");
+await as("authenticated", B, async () => {
+  check("the parent can ask for a retry", (await fn("select public.retry_credential_anchoring($1) as r", [jobP.certificate_id])).status === "ok");
+  check("only failed records can be retried", (await fn("select public.retry_credential_anchoring($1) as r", [jobA.certificate_id])).status === "not_retryable");
+});
+
+console.log("\nCredentials: public verification (Phase 7)");
+const verify = (code) => as("anon", null, async () => (await rows("select public.verify_credential($1) as r", [code]))[0].r);
+const vA = await verify(academyCred.verification_code);
+check("verification confirms a valid credential with a matching hash", vA.status === "valid" && vA.integrity.hash_matches === true && vA.credential.title === "Founder Academy Learning Milestone");
+check("verification shows the recorded anchor and that its proof matches", vA.anchor?.status === "confirmed" && vA.anchor.proof_matches === true && vA.anchor.tx_hash === fakeHex("a"));
+const exposed = JSON.stringify(vA);
+check("verification exposes no child id, nickname, salt, hash or evidence",
+  !exposed.includes(childB) && !/Demo Ben/.test(exposed) && !exposed.includes(academyCred.credential_hash) && !/salt|evidence|subject|modulesCompleted/.test(exposed));
+check("a queued (unsent) proof is not shown publicly", (await verify(pitchCred.verification_code)).anchor === null);
+check("unknown and malformed codes reveal nothing", (await verify("zzzzzzzzzzzzzzzzzzzzzzzz")).status === "not_found" && (await verify("'; drop table x; --")).status === "not_found");
+await db.exec(`set session_replication_role = replica;
+  update public.certificates set document = jsonb_set(document, '{title}', '"Forged title"') where id = '${pitchCred.id}';
+  set session_replication_role = default;`);
+check("a tampered record fails the integrity check", (await verify(pitchCred.verification_code)).status === "integrity_failed");
+await db.exec(`set session_replication_role = replica;
+  update public.certificates set document = jsonb_set(document, '{title}', to_jsonb('Pitch Ready Learning Milestone'::text)) where id = '${pitchCred.id}';
+  set session_replication_role = default;`);
+check("restoring the original data passes again", (await verify(pitchCred.verification_code)).status === "valid");
+
+console.log("\nCredentials: withdrawing consent (Phase 7)");
+await as("authenticated", B, async () => {
+  const off = await setAnchoring(childB, false);
+  check("withdrawing reports that one proof is already public", off.status === "ok" && off.withdrawn === true && off.already_public === 1);
+  check("the consent record is marked withdrawn (not deleted)",
+    (await rows("select withdrawn_at from public.consent_records where consent_type = 'onchain_credential'")).every((r) => r.withdrawn_at !== null));
+  check("not-yet-sent proofs are cancelled; the confirmed one is kept",
+    (await rows("select status from public.credential_issuances order by status")).map((r) => r.status).join() === "cancelled,confirmed");
+  check("retry is refused without consent", (await fn("select public.retry_credential_anchoring($1) as r", [jobP.certificate_id])).status === "consent_required");
+});
+check("the worker picks up nothing after withdrawal", (await as("service_role", null, async () => (await rows("select public.claim_credential_anchor_jobs(5) as r"))[0].r)).length === 0);
+check("both credentials stay valid after withdrawal", (await verify(academyCred.verification_code)).status === "valid" && (await verify(pitchCred.verification_code)).status === "valid");
+check("withdrawal is in the audit log", (await rows("select 1 from public.audit_log where action = 'consent.withdrawn.onchain_credential' and target_id = $1", [childB])).length === 1);
+await as("authenticated", B, async () => {
+  const again = await setAnchoring(childB, true, "Demo Parent B", "credentials-2026-11-v1");
+  check("turning it back on re-queues only the cancelled proof", again.status === "ok" && again.queued === 1 &&
+    (await rows("select status from public.credential_issuances order by status")).map((r) => r.status).join() === "confirmed,pending");
+  await setAnchoring(childB, false);
 });
 
 console.log("\nDeletion");

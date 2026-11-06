@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 
+import { getAdultContext } from "@/lib/auth/session";
 import { createClient } from "@/lib/supabase/server";
 import { getSiteOrigin, safeNextPath } from "@/lib/site-url";
 import {
@@ -128,9 +129,24 @@ export async function updatePasswordAction(_prev: FormState, formData: FormData)
     return { status: "error", fieldErrors: { confirmPassword: "The passwords don't match." } };
   }
 
+  // Only a fresh password-reset link may set a new password: never an ordinary session, and
+  // never Child Mode (which runs under the parent's session on the child's device).
+  const ctx = await getAdultContext();
+  if (!ctx) redirect("/sign-in");
+  if (ctx.childModeChildId) redirect("/play");
   const supabase = await createClient();
-  const { data: userData } = await supabase.auth.getUser();
-  if (!userData.user) redirect("/sign-in");
+  const { data: claimsData } = await supabase.auth.getClaims();
+  const amr = (claimsData?.claims?.amr ?? []) as { method?: string; timestamp?: number }[];
+  const now = Math.floor(Date.now() / 1000);
+  const fromResetLink = amr.some(
+    (m) => ["otp", "recovery", "magiclink"].includes(m.method ?? "") && typeof m.timestamp === "number" && now - m.timestamp <= 15 * 60,
+  );
+  if (!fromResetLink) {
+    return {
+      status: "error",
+      message: "For your security, open the password reset link from your email again, then choose a new password within 15 minutes.",
+    };
+  }
 
   const { error } = await supabase.auth.updateUser({ password: password.data });
   if (error) {

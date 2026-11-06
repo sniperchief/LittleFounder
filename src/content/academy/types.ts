@@ -102,8 +102,15 @@ export type AchievementContent = {
     | { type: "practices_completed"; count: number };
 };
 
+/**
+ * A Founder Passport credential: a learning milestone issued from stored, server-verified
+ * progress (docs/CREDENTIALS.md). `anchorable` milestones may get an anonymous public proof
+ * on Base Sepolia, but only after a parent opts in for that child.
+ */
 export type CertificateContent = {
   key: string;
   title: string;
-  requirement: { type: "modules_completed"; count: number };
+  description: string;
+  anchorable: boolean;
+  requirement: { type: "modules_completed"; count: number } | { type: "practice_score"; min: number };
 };

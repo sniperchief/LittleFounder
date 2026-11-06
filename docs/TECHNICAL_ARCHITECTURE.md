@@ -238,6 +238,14 @@ supabase/
 6. **Network.** Base **Sepolia** for the hackathon demo; Base mainnet after approval (decision D3). Mainnet costs are expected to be fractions of a cent per attestation [Assumption — measure on Sepolia/mainnet before committing].
 7. **Async issuance.** Issuance runs as a server job with a status (`pending → submitted → confirmed | failed`) so the UI never blocks on the chain; retries are idempotent via the `credential_issuances` row.
 
+### 5.3.1 As implemented (Phase 7)
+Built as recommended, with two deliberate refinements (full spec in `docs/CREDENTIALS.md`):
+- The commitment is **SHA-256(credential hash ‖ salt)**, not keccak256, so the database can recompute and check it during verification without exporting the salt. The credential hash is SHA-256 over canonical JSON (`LF-CANON-1`).
+- The schema is `bytes32 credentialType,bytes32 credentialProof,uint16 formatVersion`. `issuedAt` is dropped because the attestation already carries the block time; less data on-chain.
+- Verified addresses on Base Sepolia (84532): EAS `0x4200…0021`, SchemaRegistry `0x4200…0020` (official `eas-contracts` deployment records plus on-chain reads). viem 2.57.7 only; no EAS SDK and no wallet libraries.
+- The issuer key is server-only (`CREDENTIAL_ISSUER_PRIVATE_KEY`, kill switch `CREDENTIAL_ANCHORING_ENABLED`). The worker uses the service role for two service-role-only functions. Transactions are signed locally and stored before broadcast, so retries can't duplicate them. Success is only recorded after the attestation is read back on-chain.
+- Status 2026-11-06: offchain credentials and verification are live. On-chain anchoring is implemented and tested up to read-only/simulated chain calls; it is waiting for a funded testnet issuer key and schema registration.
+
 ### 5.4 Parent-controlled wallets (future)
 If parents later want credentials in their own wallet: parent connects/creates a Base Account (smart wallet) in the Parent area only; issuer attests with `recipient = parentAddress` and the child is represented only by the commitment. A paymaster is still unnecessary because the issuer pays. Defer.
 

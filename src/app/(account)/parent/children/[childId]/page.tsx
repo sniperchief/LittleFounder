@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { ArrowLeft, Pencil, Trash2 } from "lucide-react";
+import { ArrowLeft, Pencil, ShieldCheck, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Suspense } from "react";
@@ -90,6 +90,9 @@ async function Content({ params, searchParams }: PageProps<"/parent/children/[ch
         </div>
         <div className="flex flex-col gap-2 sm:flex-row">
           <EnterChildModeButton childId={child.id} nickname={child.nickname} />
+          <Link href={`/parent/children/${child.id}/credentials`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
+            <ShieldCheck aria-hidden="true" /> Credentials
+          </Link>
           <Link href={`/parent/children/${child.id}/edit`} className={buttonVariants({ variant: "secondary", size: "sm" })}>
             <Pencil aria-hidden="true" /> Edit
           </Link>
