@@ -1,0 +1,119 @@
+@import "tailwindcss";
+
+/*
+ * LITTLE FOUNDERS design tokens.
+ * Warm paper background, deep "ink" text, and six bright accents used as
+ * soft tints with ink foregrounds (keeps contrast AA without gradients).
+ */
+:root {
+  --background: #fffbf5;
+  --surface: #ffffff;
+  --foreground: #1a1b3a;
+  --muted: #f6efe4;
+  --muted-foreground: #565876;
+  --border: #e9dfd0;
+  --ring: #4d6cf7;
+
+  --ink: #1a1b3a;
+  --sun: #ffc233;
+  --sun-soft: #fff1cc;
+  --coral: #ff6f59;
+  --coral-soft: #ffe3dc;
+  --coral-ink: #c2402c; /* coral dark enough for text (AA on paper) */
+  --sky: #4d8df7;
+  --sky-soft: #e2edff;
+  --mint: #2db892;
+  --mint-soft: #dbf4ea;
+  --grape: #7b5cf0;
+  --grape-soft: #ece6ff;
+  --rose: #f25c9a;
+  --rose-soft: #ffe4f0;
+
+  --radius: 1rem;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-ring: var(--ring);
+
+  --color-ink: var(--ink);
+  --color-sun: var(--sun);
+  --color-sun-soft: var(--sun-soft);
+  --color-coral: var(--coral);
+  --color-coral-soft: var(--coral-soft);
+  --color-coral-ink: var(--coral-ink);
+  --color-sky: var(--sky);
+  --color-sky-soft: var(--sky-soft);
+  --color-mint: var(--mint);
+  --color-mint-soft: var(--mint-soft);
+  --color-grape: var(--grape);
+  --color-grape-soft: var(--grape-soft);
+  --color-rose: var(--rose);
+  --color-rose-soft: var(--rose-soft);
+
+  --font-sans: var(--font-figtree);
+  --font-display: var(--font-bricolage);
+
+  --radius-sm: calc(var(--radius) - 0.5rem);
+  --radius-md: calc(var(--radius) - 0.25rem);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 0.5rem);
+
+  /* "Sticker" shadow: a solid offset shadow in ink, used sparingly. */
+  --shadow-sticker: 3px 3px 0 0 var(--ink);
+  --shadow-sticker-lg: 5px 5px 0 0 var(--ink);
+  --shadow-soft: 0 1px 2px rgb(26 27 58 / 0.04), 0 8px 24px -12px rgb(26 27 58 / 0.18);
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  html {
+    scroll-behavior: smooth;
+    scroll-padding-top: 5rem;
+  }
+
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    font-family: var(--font-figtree), ui-sans-serif, system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    font-family: var(--font-bricolage), ui-sans-serif, system-ui, sans-serif;
+    letter-spacing: -0.02em;
+    text-wrap: balance;
+  }
+
+  p {
+    text-wrap: pretty;
+  }
+
+  :focus-visible {
+    outline: 3px solid var(--ring);
+    outline-offset: 2px;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    html {
+      scroll-behavior: auto;
+    }
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+}
